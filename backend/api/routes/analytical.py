@@ -14,7 +14,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(c
 sys.path.append(project_root)
 
 from src.analysis.analytical import MMNAnalytical, MGNAnalytical, TandemQueueAnalytical
-from api.models.analytical_models import (
+from backend.api.models.analytical_models import (
     MMNAnalyticalRequest,
     MGNAnalyticalRequest,
     TandemAnalyticalRequest,

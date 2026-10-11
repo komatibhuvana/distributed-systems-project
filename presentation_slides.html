@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed Message Queue Performance - Presentation</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        .slide {
+            min-height: 100vh;
+            padding: 40px 60px;
+            display: flex;
+            flex-direction: column;
+            border-bottom: 3px solid #4a4a6a;
+        }
+        .slide-number {
+            position: absolute;
+            top: 20px;
+            right: 40px;
+            font-size: 14px;
+            color: #888;
+        }
+        h1 {
+            font-size: 2.8em;
+            color: #00d4ff;
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 2.2em;
+            color: #00d4ff;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #4a4a6a;
+            padding-bottom: 10px;
+        }
+        h3 {
+            font-size: 1.4em;
+            color: #ffd700;
+            margin: 20px 0 10px 0;
+        }
+        .subtitle {
+            font-size: 1.4em;
+            color: #aaa;
+            margin-bottom: 20px;
+        }
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        ul {
+            font-size: 1.3em;
+            line-height: 1.8;
+            margin-left: 40px;
+        }
+        li {
+            margin: 10px 0;
+        }
+        .highlight {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        .success {
+            color: #51cf66;
+        }
+        .warning {
+            color: #ffd43b;
+        }
+        .mermaid {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .speaker-notes {
+            background: #2a2a4a;
+            border-left: 4px solid #00d4ff;
+            padding: 20px;
+            margin-top: 30px;
+            font-style: italic;
+            color: #aaa;
+            font-size: 0.95em;
+        }
+        .speaker-notes::before {
+            content: "🎤 Speaker Notes: ";
+            color: #00d4ff;
+            font-style: normal;
+            font-weight: bold;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 1.1em;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border: 1px solid #4a4a6a;
+        }
+        th {
+            background: #3a3a5a;
+            color: #00d4ff;
+        }
+        tr:nth-child(even) {
+            background: #2a2a4a;
+        }
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+        .formula {
+            background: #2a2a4a;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 1.3em;
+            color: #ffd700;
+            display: inline-block;
+            margin: 10px 0;
+        }
+        .big-number {
+            font-size: 4em;
+            color: #ff6b6b;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .card {
+            background: #2a2a4a;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 10px 0;
+        }
+        .card-title {
+            color: #00d4ff;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+        .title-slide {
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+        .title-slide h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+        }
+        .nav {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 1000;
+        }
+        .nav button {
+            padding: 10px 20px;
+            background: #00d4ff;
+            border: none;
+            border-radius: 5px;
+            color: #1a1a2e;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .nav button:hover {
+            background: #00a8cc;
+        }
+        .comparison-bar {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .bar-label {
+            width: 200px;
+            font-size: 1.1em;
+        }
+        .bar {
+            height: 40px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            padding-left: 15px;
+            color: #fff;
+            font-weight: bold;
+        }
+        .bar-grey { background: #666; }
+        .bar-red { background: #e74c3c; }
+        .bar-green { background: #27ae60; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <button onclick="prevSlide()">← Prev</button>
+        <button onclick="nextSlide()">Next →</button>
+    </div>
+
+    <!-- Slide 1: Title -->
+    <div class="slide title-slide" id="slide1">
+        <span class="slide-number">1/25</span>
+        <h1>Reliability and Performance in Distributed Message Queues</h1>
+        <p class="subtitle">Analyzing Heavy-Tailed Workloads in Cloud Systems</p>
+        <br><br>
+        <p style="font-size: 1.3em;">Bhuvana Komati</p>
+        <p style="color: #888;">CS 273 - Distributed Systems | Fall 2025</p>
+        
+        <div class="speaker-notes">
+            Good morning/afternoon everyone. Today I'll be presenting my project on reliability and performance modeling in distributed message queues. This work extends a 2015 research paper by analyzing what happens when real-world heavy-tailed workloads hit cloud messaging systems.
+        </div>
+    </div>
+
+    <!-- Slide 2: Agenda -->
+    <div class="slide" id="slide2">
+        <span class="slide-number">2/25</span>
+        <h2>Presentation Overview</h2>
+        <div class="content">
+            <div class="two-column">
+                <div>
+                    <ul>
+                        <li>Problem Statement & Motivation</li>
+                        <li>Base Paper Overview (Li et al. 2015)</li>
+                        <li>The Tandem Queue Model</li>
+                        <li>Our Implementation Approach</li>
+                        <li>Heavy-Tailed Distributions</li>
+                        <li>The "Reality Gap" Discovery</li>
+                    </ul>
+                </div>
+                <div>
+                    <ul>
+                        <li>Tail Risk Analysis (P99 Latency)</li>
+                        <li>Distributed Systems Integration</li>
+                        <li>Demo & Live Results</li>
+                        <li>Mitigation Strategies</li>
+                        <li>Conclusion & Future Work</li>
+                        <li>Q&A</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Here's our roadmap for the next 30 minutes. We'll start with the problem, review the base paper's tandem queue model, show what we built and why we chose SimPy over Petri Nets, reveal our key findings about tail latency, and wrap up with conclusions.
+        </div>
+    </div>
+
+    <!-- Slide 3: The Problem -->
+    <div class="slide" id="slide3">
+        <span class="slide-number">3/25</span>
+        <h2>The Challenge of Reliable Cloud Messaging</h2>
+        <div class="content">
+            <ul>
+                <li>Cloud systems must guarantee message delivery <span class="success">("At-Least-Once")</span></li>
+                <li>Network failures cause retransmissions → extra load</li>
+                <li><span class="highlight">The Gap:</span> Existing models assume "Exponential" service times</li>
+                <li><span class="highlight">Reality:</span> Real cloud workloads are "Heavy-Tailed" (Pareto)</li>
+                <li>Rare, huge jobs can block the entire queue</li>
+            </ul>
+            
+            <div class="two-column" style="margin-top: 30px;">
+                <div class="card">
+                    <div class="card-title">☕ Starbucks (Exponential)</div>
+                    <p>Most orders: 2-5 minutes</p>
+                    <p>Predictable, narrow distribution</p>
+                    <p class="success">✓ Models assume this</p>
+                </div>
+                <div class="card">
+                    <div class="card-title">🏛️ DMV (Heavy-Tailed)</div>
+                    <p>Most visits: 10 minutes</p>
+                    <p>One person: 4 HOURS (blocks everyone)</p>
+                    <p class="highlight">✗ Reality is this!</p>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Imagine you're at the DMV. Most people need 10 minutes for a simple license renewal. But then ONE person arrives who needs to register a fleet of 50 imported trucks with missing paperwork. That takes 4 hours. Everyone behind them waits. This is exactly what happens in cloud systems.
+        </div>
+    </div>
+
+    <!-- Slide 4: Base Paper -->
+    <div class="slide" id="slide4">
+        <span class="slide-number">4/25</span>
+        <h2>Li et al. (2015) - Message Queueing in Cloud</h2>
+        <div class="content">
+            <ul>
+                <li>Models cloud message brokers (like AWS SQS, RabbitMQ)</li>
+                <li>Uses <span class="warning">Colored Petri Nets (CPN)</span> for formal verification</li>
+                <li>Key model: Two-stage <span class="success">"Tandem Queue"</span></li>
+                <li>Assumes <span class="highlight">M/M/N</span> queueing (exponential service times)</li>
+                <li>Derives formulas for latency, queue length, utilization</li>
+            </ul>
+            
+            <div class="card" style="margin-top: 30px;">
+                <div class="card-title">📄 Paper Citation</div>
+                <p>"Modeling Message Queueing Services with Reliability Guarantee in Cloud Computing Environment Using Colored Petri Nets"</p>
+                <p style="color: #888;">Li, Cui, Ma - Mathematical Problems in Engineering, 2015</p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            The base paper by Li and colleagues models cloud message brokers. They used Colored Petri Nets, which is a formal verification technique. Their key contribution is the 'tandem queue' model - a two-stage system where messages go from a broker to a receiver over an unreliable network.
+        </div>
+    </div>
+
+    <!-- Slide 5: Tandem Queue -->
+    <div class="slide" id="slide5">
+        <span class="slide-number">5/25</span>
+        <h2>Two-Stage Tandem Queue Architecture</h2>
+        <div class="content">
+            <div class="mermaid">
+flowchart LR
+    subgraph Publishers
+        P1[Publisher 1]
+        P2[Publisher 2]
+    end
+    subgraph Stage1["Stage 1: Broker"]
+        Q1[(Queue)]
+        S1[["n₁=10, μ₁=12"]]
+    end
+    subgraph Network["Network"]
+        NET{{"D=10ms, p=20%"}}
+    end
+    subgraph Stage2["Stage 2: Receiver"]
+        Q2[(Queue)]
+        S2[["n₂=12, μ₂=12"]]
+    end
+    subgraph Consumers
+        C1[Consumer]
+    end
+    P1 & P2 -->|"λ=100"| Q1
+    Q1 --> S1
+    S1 --> NET
+    NET -->|"Λ₂=125"| Q2
+    NET -.->|"Retry 20%"| Q1
+    Q2 --> S2
+    S2 --> C1
+            </div>
+            
+            <div class="formula" style="text-align: center; width: 100%;">
+                Traffic Inflation: Λ₂ = λ/(1-p) = 100/(1-0.2) = <span class="highlight">125 msg/sec</span>
+            </div>
+            <p style="text-align: center; margin-top: 10px;">Stage 2 sees <span class="highlight">25% MORE</span> traffic due to retransmissions!</p>
+        </div>
+        <div class="speaker-notes">
+            Here's the architecture. Messages flow from publishers through a broker, across a network, to a receiver. If 20% of messages fail and need retransmission, Stage 2 actually sees 25% MORE traffic. This 'traffic inflation' can push Stage 2 into overload even when Stage 1 looks fine.
+        </div>
+    </div>
+
+    <!-- Slide 6: Implementation Approach -->
+    <div class="slide" id="slide6">
+        <span class="slide-number">6/25</span>
+        <h2>Methodology: SimPy Discrete-Event Simulation</h2>
+        <div class="content">
+            <table>
+                <tr>
+                    <th>Aspect</th>
+                    <th>CPN (Paper)</th>
+                    <th>SimPy (Ours)</th>
+                </tr>
+                <tr>
+                    <td>Formal Proofs</td>
+                    <td class="success">✅ Yes</td>
+                    <td class="highlight">❌ No</td>
+                </tr>
+                <tr>
+                    <td>Deadlock Detection</td>
+                    <td class="success">✅ Provable</td>
+                    <td class="warning">⚠️ Empirical</td>
+                </tr>
+                <tr>
+                    <td>Distribution Flexibility</td>
+                    <td class="highlight">❌ Complex</td>
+                    <td class="success">✅ Easy</td>
+                </tr>
+                <tr>
+                    <td>Statistical Analysis</td>
+                    <td class="highlight">❌ Limited</td>
+                    <td class="success">✅ Rich (percentiles, CI)</td>
+                </tr>
+                <tr>
+                    <td>Python Integration</td>
+                    <td class="highlight">❌ No</td>
+                    <td class="success">✅ Full ecosystem</td>
+                </tr>
+            </table>
+            <p style="text-align: center; margin-top: 20px;"><span class="warning">Trade-off:</span> Lost formal proofs, gained flexibility for heavy-tail analysis</p>
+        </div>
+        <div class="speaker-notes">
+            Why didn't we use Petri Nets like the paper? We made a conscious trade-off. Petri Nets give you formal proofs, but they're rigid. SimPy lets us easily swap distributions, collect rich statistics, and integrate with the Python data science ecosystem.
+        </div>
+    </div>
+
+    <!-- Slide 7: Validation -->
+    <div class="slide" id="slide7">
+        <span class="slide-number">7/25</span>
+        <h2>Validating the Baseline Model</h2>
+        <div class="content">
+            <table>
+                <tr>
+                    <th>Figure</th>
+                    <th>Metric</th>
+                    <th>Paper Value</th>
+                    <th>Our Value</th>
+                    <th>Error</th>
+                </tr>
+                <tr>
+                    <td>Fig 11</td>
+                    <td>Delivery Time</td>
+                    <td>0.167s</td>
+                    <td>0.156s</td>
+                    <td class="success">6.6%</td>
+                </tr>
+                <tr>
+                    <td>Fig 12</td>
+                    <td>Queue Length</td>
+                    <td>3.2</td>
+                    <td>2.8</td>
+                    <td class="warning">12.5%</td>
+                </tr>
+                <tr>
+                    <td>Fig 13</td>
+                    <td>Utilization</td>
+                    <td>83.3%</td>
+                    <td>83.1%</td>
+                    <td class="success">0.2%</td>
+                </tr>
+                <tr>
+                    <td>Fig 14</td>
+                    <td>Service Trend</td>
+                    <td>✓</td>
+                    <td>✓</td>
+                    <td class="success">Match</td>
+                </tr>
+                <tr>
+                    <td>Fig 15</td>
+                    <td>Arrival Trend</td>
+                    <td>✓</td>
+                    <td>✓</td>
+                    <td class="success">Match</td>
+                </tr>
+            </table>
+            <div style="text-align: center; margin-top: 30px;">
+                <span style="background: #27ae60; padding: 15px 30px; border-radius: 10px; font-size: 1.3em;">
+                    ✓ BASELINE VALIDATED (< 15% error)
+                </span>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Before extending the paper, we had to prove we could reproduce it. We reproduced all five key figures from the paper. Our simulation matches their results within 15% error. This gives us confidence that any differences we find with heavy tails are real, not bugs.
+        </div>
+    </div>
+
+    <!-- Slide 8: 15 Equations -->
+    <div class="slide" id="slide8">
+        <span class="slide-number">8/25</span>
+        <h2>Mathematical Foundation: 15 Equations</h2>
+        <div class="content">
+            <div class="two-column">
+                <div class="card">
+                    <div class="card-title">M/M/N Baseline (Eq 1-5)</div>
+                    <p class="formula">ρ = λ/(N·μ) = 0.833</p>
+                    <p class="formula">C(N,a) = Erlang-C ≈ 0.65</p>
+                    <p class="formula">Lq = C·ρ/(1-ρ) = 3.24</p>
+                    <p class="formula">Wq = Lq/λ = 32ms</p>
+                </div>
+                <div class="card">
+                    <div class="card-title">Heavy-Tailed (Eq 6-10)</div>
+                    <p class="formula">f(t) = α·k^α/t^(α+1)</p>
+                    <p class="formula">E[S] = α·k/(α-1)</p>
+                    <p class="formula">C² = 1/(α(α-2)) <span class="warning">← CORRECTED!</span></p>
+                    <p class="formula">Wq(M/G/N) ≈ Wq·(1+C²)/2</p>
+                </div>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-title">Threading Models (Eq 11-15)</div>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <span class="formula">Nmax = Nthreads/2</span>
+                    <span class="formula">μeff = μ/(1+α·N/T)</span>
+                    <span class="formula">R99 ≈ E[R]+2.33·σ</span>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Our implementation is grounded in 15 analytical equations. The first five are classic M/M/N formulas. Equations 6-10 extend to heavy-tailed distributions. Note: We actually found and corrected an error in the coefficient of variation formula.
+        </div>
+    </div>
+
+    <!-- Slide 9: Heavy Tails -->
+    <div class="slide" id="slide9">
+        <span class="slide-number">9/25</span>
+        <h2>Why "Heavy Tails" Matter</h2>
+        <div class="content">
+            <h3>Distribution Comparison (Same Mean = 100ms)</h3>
+            <table>
+                <tr>
+                    <th>Percentile</th>
+                    <th>Exponential</th>
+                    <th>Pareto (α=2.5)</th>
+                    <th>Ratio</th>
+                </tr>
+                <tr>
+                    <td>P50</td>
+                    <td>69ms</td>
+                    <td>58ms</td>
+                    <td>0.84x</td>
+                </tr>
+                <tr>
+                    <td>P90</td>
+                    <td>230ms</td>
+                    <td>320ms</td>
+                    <td class="warning">1.4x</td>
+                </tr>
+                <tr>
+                    <td>P95</td>
+                    <td>300ms</td>
+                    <td>580ms</td>
+                    <td class="warning">1.9x</td>
+                </tr>
+                <tr>
+                    <td>P99</td>
+                    <td>460ms</td>
+                    <td class="highlight">2,100ms</td>
+                    <td class="highlight">4.6x</td>
+                </tr>
+                <tr>
+                    <td>P99.9</td>
+                    <td>690ms</td>
+                    <td class="highlight">14,800ms</td>
+                    <td class="highlight">21x</td>
+                </tr>
+            </table>
+            <p style="text-align: center; margin-top: 20px; font-size: 1.2em;">
+                <span class="highlight">One slow job blocks everyone behind it!</span>
+            </p>
+        </div>
+        <div class="speaker-notes">
+            In an exponential distribution, if the average job takes 100ms, you might see jobs ranging from 50ms to 200ms. In a Pareto distribution with the same average, most jobs take 20ms. But occasionally you get a job that takes 10 SECONDS. That's 100x the average!
+        </div>
+    </div>
+
+    <!-- Slide 10: Reality Gap -->
+    <div class="slide" id="slide10">
+        <span class="slide-number">10/25</span>
+        <h2>The "Reality Gap" in Performance</h2>
+        <div class="content">
+            <h3>Mean Latency Comparison</h3>
+            <div style="margin: 30px 0;">
+                <div class="comparison-bar">
+                    <span class="bar-label">Paper (M/M/N)</span>
+                    <div class="bar bar-grey" style="width: 35%;">0.167s</div>
+                </div>
+                <div class="comparison-bar">
+                    <span class="bar-label">QNA Approximation</span>
+                    <div class="bar bar-red" style="width: 100%;">0.480s</div>
+                </div>
+                <div class="comparison-bar">
+                    <span class="bar-label">Our Simulation</span>
+                    <div class="bar bar-green" style="width: 40%;">0.190s</div>
+                </div>
+            </div>
+            
+            <div class="card" style="text-align: center;">
+                <p style="font-size: 1.5em;">Paper underestimates average latency by <span class="highlight">14%</span></p>
+                <p style="color: #888; margin-top: 10px;">But wait... this is just the AVERAGE. The real danger is in the TAIL!</p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Here's our first key finding. The paper predicts 0.16 seconds average latency. Our heavy-tailed simulation shows 0.19 seconds. That's a 14% underestimation. You might think 14% isn't bad. But wait - this is just the AVERAGE.
+        </div>
+    </div>
+
+    <!-- Slide 11: Tail Risk - CRITICAL -->
+    <div class="slide" id="slide11" style="background: linear-gradient(135deg, #1a1a2e 0%, #2d1f1f 100%);">
+        <span class="slide-number">11/25</span>
+        <h2>⚠️ Tail Latency: The Hidden Danger ⚠️</h2>
+        <div class="content">
+            <h3>P99 Latency Comparison (99th Percentile)</h3>
+            <div class="two-column">
+                <div class="card" style="text-align: center; border: 2px solid #e74c3c;">
+                    <div class="card-title">Paper Prediction</div>
+                    <div class="big-number" style="color: #e74c3c;">4.25s</div>
+                    <p>Normal Approximation</p>
+                </div>
+                <div class="card" style="text-align: center; border: 2px solid #27ae60;">
+                    <div class="card-title">Simulation Reality</div>
+                    <div class="big-number" style="color: #27ae60;">7.81s</div>
+                    <p>Extreme Value Theory</p>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 30px; padding: 20px; background: #3d1f1f; border-radius: 10px;">
+                <p style="font-size: 2em; color: #ff6b6b;">
+                    Paper underestimates tail risk by <strong>45%</strong>!
+                </p>
+                <p style="color: #aaa; margin-top: 10px;">
+                    ❌ SLA Violations &nbsp;&nbsp; ❌ Timeouts &nbsp;&nbsp; ❌ Customer Complaints
+                </p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            THIS is the most important slide. P99 latency means 99% of requests are faster than this value. It's what SLAs are built on. The paper predicts 4.25 seconds. Our simulation shows 7.81 seconds. That's a 45% underestimation! If you built a system expecting 4-second worst case and it actually hits 8 seconds, your SLA is violated.
+        </div>
+    </div>
+
+    <!-- Slide 12: Approximation Methods -->
+    <div class="slide" id="slide12">
+        <span class="slide-number">12/25</span>
+        <h2>Three Approaches to M/G/N Queues</h2>
+        <div class="content">
+            <p style="margin-bottom: 20px;"><span class="warning">Problem:</span> No exact closed-form solution exists for M/G/N!</p>
+            <table>
+                <tr>
+                    <th>α (Pareto)</th>
+                    <th>CV²</th>
+                    <th>Kingman Error</th>
+                    <th>Whitt Error</th>
+                    <th>Allen-Cunneen</th>
+                    <th>Best</th>
+                </tr>
+                <tr>
+                    <td>3.0</td>
+                    <td>0.33</td>
+                    <td>5.2%</td>
+                    <td class="success">3.1%</td>
+                    <td>6.8%</td>
+                    <td class="success">Whitt</td>
+                </tr>
+                <tr>
+                    <td>2.5</td>
+                    <td>1.0</td>
+                    <td>8.7%</td>
+                    <td class="success">4.5%</td>
+                    <td>9.2%</td>
+                    <td class="success">Whitt</td>
+                </tr>
+                <tr>
+                    <td>2.1</td>
+                    <td>10.0</td>
+                    <td class="highlight">24.3%</td>
+                    <td>9.8%</td>
+                    <td class="success">8.1%</td>
+                    <td class="success">A-C</td>
+                </tr>
+            </table>
+            <div style="text-align: center; margin-top: 20px;">
+                <span style="background: #3498db; padding: 10px 20px; border-radius: 5px;">
+                    Recommendation: Use <strong>Whitt (1993)</strong> as default
+                </span>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            There's no exact formula for M/G/N queues. So we implemented three different approximations. Kingman from 1961 is the classic approach. Whitt from 1993 is more accurate at high utilization. Allen-Cunneen works better for very heavy tails.
+        </div>
+    </div>
+
+    <!-- Slide 13: Convergence -->
+    <div class="slide" id="slide13">
+        <span class="slide-number">13/25</span>
+        <h2>Scientific Rigor: Convergence Test</h2>
+        <div class="content">
+            <p>Is this just statistical noise? <span class="success">No.</span></p>
+            <table>
+                <tr>
+                    <th>Messages</th>
+                    <th>P99 Latency</th>
+                    <th>95% CI Width</th>
+                </tr>
+                <tr>
+                    <td>1,000</td>
+                    <td>14.2s</td>
+                    <td>±3.1s</td>
+                </tr>
+                <tr>
+                    <td>10,000</td>
+                    <td>12.8s</td>
+                    <td>±1.2s</td>
+                </tr>
+                <tr>
+                    <td>50,000</td>
+                    <td>12.4s</td>
+                    <td>±0.4s</td>
+                </tr>
+                <tr>
+                    <td>100,000</td>
+                    <td>12.3s</td>
+                    <td>±0.2s</td>
+                </tr>
+                <tr>
+                    <td class="success">400,000</td>
+                    <td class="success">12.2s</td>
+                    <td class="success">±0.08s</td>
+                </tr>
+            </table>
+            <div class="card" style="text-align: center; margin-top: 20px;">
+                <p>Ran <span class="success">400,000 messages</span> (100x more than paper)</p>
+                <p>Used <span class="success">20 replications</span> with 95% confidence intervals</p>
+                <p style="margin-top: 10px;">Result: P99 <strong>stabilizes</strong> - this is a fact, not noise!</p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            A fair question: maybe our high P99 is just bad luck? We tested this rigorously. We ran simulations with 400,000 messages - that's 100 times more than the paper used. The result: the P99 converges and stabilizes. It's not noise.
+        </div>
+    </div>
+
+    <!-- Slide 14: Distributed Systems -->
+    <div class="slide" id="slide14">
+        <span class="slide-number">14/25</span>
+        <h2>Distributed Systems Integration</h2>
+        <div class="content">
+            <div class="two-column">
+                <div>
+                    <h3>Protocols Implemented</h3>
+                    <ul>
+                        <li><span class="success">Raft Consensus</span> - Leader election, log replication</li>
+                        <li><span class="success">Vector Clocks</span> - Causality tracking</li>
+                        <li><span class="success">Two-Phase Commit</span> - Atomic transactions</li>
+                    </ul>
+                    <h3 style="margin-top: 30px;">Cloud Features</h3>
+                    <ul>
+                        <li>Visibility timeout (ACK/NACK)</li>
+                        <li>Message replication</li>
+                        <li>In-order vs out-of-order delivery</li>
+                    </ul>
+                </div>
+                <div>
+                    <div class="mermaid">
+stateDiagram-v2
+    [*] --> Follower
+    Follower --> Candidate: Timeout
+    Candidate --> Leader: Majority
+    Candidate --> Follower: Higher term
+    Leader --> Follower: Higher term
+                    </div>
+                    <p style="text-align: center; color: #888;">Raft State Machine</p>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Beyond the queueing analysis, we integrated several distributed systems concepts from our course. Raft consensus for leader election, Vector clocks for causality tracking, and Two-Phase Commit for atomic transactions.
+        </div>
+    </div>
+
+    <!-- Slide 15: Raft Demo -->
+    <div class="slide" id="slide15">
+        <span class="slide-number">15/25</span>
+        <h2>Raft Leader Election Demo</h2>
+        <div class="content">
+            <div class="mermaid">
+sequenceDiagram
+    participant N0 as Node 0 (F)
+    participant N1 as Node 1 (F)
+    participant N4 as Node 4 (C→L)
+    participant N2 as Node 2 (F)
+    participant N3 as Node 3 (F)
+    
+    Note over N4: Election timeout
+    N4->>N0: RequestVote(term=1)
+    N4->>N1: RequestVote(term=1)
+    N4->>N2: RequestVote(term=1)
+    N4->>N3: RequestVote(term=1)
+    N0-->>N4: VoteGranted ✓
+    N1-->>N4: VoteGranted ✓
+    N2-->>N4: VoteGranted ✓
+    N3-->>N4: VoteGranted ✓
+    Note over N4: Becomes LEADER
+            </div>
+            <table style="margin-top: 20px;">
+                <tr><th>Node</th><th>State</th><th>Term</th><th>Voted For</th></tr>
+                <tr><td>N0</td><td>Follower</td><td>1</td><td>N4</td></tr>
+                <tr><td>N1</td><td>Follower</td><td>1</td><td>N4</td></tr>
+                <tr><td>N2</td><td>Follower</td><td>1</td><td>N4</td></tr>
+                <tr><td>N3</td><td>Follower</td><td>1</td><td>N4</td></tr>
+                <tr><td class="success">N4</td><td class="success">LEADER</td><td>1</td><td>N4</td></tr>
+            </table>
+        </div>
+        <div class="speaker-notes">
+            Here's our Raft implementation. We create a 5-node cluster. On startup, nodes begin in follower state. After election timeout, one node becomes a candidate, requests votes, and becomes leader. In this run, Node 4 won the election.
+        </div>
+    </div>
+
+    <!-- Slide 16: Vector Clocks -->
+    <div class="slide" id="slide16">
+        <span class="slide-number">16/25</span>
+        <h2>Tracking Causality with Vector Clocks</h2>
+        <div class="content">
+            <div class="mermaid">
+sequenceDiagram
+    participant P1 as Process 1
+    participant P2 as Process 2
+    participant P3 as Process 3
+    
+    Note over P1: [1,0,0]
+    Note over P2: [0,1,0]
+    Note over P1: [2,0,0]
+    P1->>P2: Send msg
+    Note over P2: [2,2,0]
+    Note over P3: [0,0,1]
+    P2->>P1: Send msg
+    Note over P1: [3,2,0]
+    P2->>P3: Send msg
+    Note over P3: [2,2,2]
+            </div>
+            <div class="two-column" style="margin-top: 20px;">
+                <div class="card">
+                    <div class="card-title">✓ Happened-Before</div>
+                    <p>[2,0,0] → [2,2,0]</p>
+                    <p>Causal relationship exists</p>
+                </div>
+                <div class="card">
+                    <div class="card-title">✗ Concurrent</div>
+                    <p>[0,0,2] || [2,2,0]</p>
+                    <p>No causal relationship</p>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Vector clocks let us track causality in distributed systems. Each process maintains a vector with one entry per process. This lets us determine if event A happened before event B, or if they're concurrent.
+        </div>
+    </div>
+
+    <!-- Slide 17: 2PC -->
+    <div class="slide" id="slide17">
+        <span class="slide-number">17/25</span>
+        <h2>Atomic Transactions with 2PC</h2>
+        <div class="content">
+            <div class="mermaid">
+sequenceDiagram
+    participant C as Coordinator
+    participant A as Participant A
+    participant B as Participant B
+    
+    Note over C,B: Phase 1: Prepare
+    C->>A: PREPARE
+    C->>B: PREPARE
+    A-->>C: YES ✓
+    B-->>C: YES ✓
+    Note over C: All voted YES
+    Note over C,B: Phase 2: Commit
+    C->>A: COMMIT
+    C->>B: COMMIT
+    A-->>C: ACK
+    B-->>C: ACK
+    Note over C,B: ✓ COMMITTED
+            </div>
+            <table style="margin-top: 20px;">
+                <tr><th>Transaction</th><th>Participants</th><th>Votes</th><th>Outcome</th></tr>
+                <tr><td>T1</td><td>A, B, C</td><td>YES, YES, YES</td><td class="success">✓ COMMIT</td></tr>
+                <tr><td>T2</td><td>A, B, C</td><td>YES, NO, YES</td><td class="highlight">✗ ABORT</td></tr>
+                <tr><td>T3</td><td>A, B</td><td>YES, TIMEOUT</td><td class="highlight">✗ ABORT</td></tr>
+            </table>
+        </div>
+        <div class="speaker-notes">
+            Two-Phase Commit ensures atomic transactions across multiple nodes. Either all nodes commit, or none do. In Phase 1, the coordinator sends PREPARE. In Phase 2, if all votes are YES, it sends COMMIT.
+        </div>
+    </div>
+
+    <!-- Slide 18: Mitigation -->
+    <div class="slide" id="slide18" style="background: linear-gradient(135deg, #1a1a2e 0%, #1f2d1f 100%);">
+        <span class="slide-number">18/25</span>
+        <h2>🎯 Taming the Tail: The Solution</h2>
+        <div class="content">
+            <h3>P99 Latency vs Server Count</h3>
+            <div class="two-column">
+                <div>
+                    <table>
+                        <tr><th>Servers (N)</th><th>P99 Latency</th><th>Improvement</th></tr>
+                        <tr><td>1</td><td class="highlight">12.3s</td><td>—</td></tr>
+                        <tr><td class="success">2</td><td class="success">0.90s</td><td class="success">93%</td></tr>
+                        <tr><td>3</td><td>0.45s</td><td>96%</td></tr>
+                        <tr><td>5</td><td>0.28s</td><td>98%</td></tr>
+                        <tr><td>10</td><td>0.18s</td><td>99%</td></tr>
+                    </table>
+                </div>
+                <div style="display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                    <div style="font-size: 1.5em; margin-bottom: 20px;">N=1 → N=2</div>
+                    <div class="big-number" style="color: #27ae60;">93%</div>
+                    <div style="font-size: 1.3em;">improvement!</div>
+                </div>
+            </div>
+            <div class="card" style="text-align: center; margin-top: 20px; border: 2px solid #27ae60;">
+                <p style="font-size: 1.3em;">
+                    <span class="success">Key Insight:</span> Heavy tails require MORE capacity than exponential models predict!
+                </p>
+                <p style="color: #888; margin-top: 10px;">Adding just ONE server fixes the problem.</p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            How do we fix the high latency? The answer is capacity. With one server, P99 is 12.3 seconds. Add just ONE more server, and P99 drops to 0.9 seconds. That's a 93% improvement! This is actionable advice for system designers.
+        </div>
+    </div>
+
+    <!-- Slide 19: Architecture -->
+    <div class="slide" id="slide19">
+        <span class="slide-number">19/25</span>
+        <h2>Full-Stack System Architecture</h2>
+        <div class="content">
+            <div class="mermaid">
+flowchart TB
+    subgraph FE["Frontend (Port 4000)"]
+        React[React + TypeScript]
+        MUI[Material-UI]
+        Charts[Recharts]
+    end
+    subgraph BE["Backend (Port 6000)"]
+        FastAPI[FastAPI]
+        Pydantic[Pydantic Validation]
+    end
+    subgraph Core["Simulation Engine"]
+        SimPy[SimPy DES]
+        Models["M/M/N | M/G/N | Tandem"]
+    end
+    subgraph Analysis["Analysis"]
+        Equations[15 Equations]
+        EVT[EVT for P99]
+        Stats[NumPy/SciPy]
+    end
+    React --> FastAPI
+    FastAPI --> SimPy
+    SimPy --> Models
+    FastAPI --> Equations
+    Equations --> Stats
+    Models --> EVT
+            </div>
+        </div>
+        <div class="speaker-notes">
+            We built a complete full-stack application. The frontend uses React with TypeScript. The backend is FastAPI. The simulation engine uses SimPy. Everything is integrated - you can run experiments from the web UI and see results in real-time.
+        </div>
+    </div>
+
+    <!-- Slide 20: Testing -->
+    <div class="slide" id="slide20">
+        <span class="slide-number">20/25</span>
+        <h2>Validation & Testing</h2>
+        <div class="content">
+            <div class="two-column">
+                <div>
+                    <h3>Test Coverage: 63 Tests ✓</h3>
+                    <table>
+                        <tr><th>Test File</th><th>Tests</th></tr>
+                        <tr><td>test_erlang.py</td><td>12</td></tr>
+                        <tr><td>test_queueing_laws.py</td><td>4</td></tr>
+                        <tr><td>test_extreme_values.py</td><td>13</td></tr>
+                        <tr><td>test_extreme_conditions.py</td><td>10</td></tr>
+                        <tr><td>test_priority_queues.py</td><td>8</td></tr>
+                        <tr><td>test_finite_capacity.py</td><td>16</td></tr>
+                        <tr><td class="success"><strong>TOTAL</strong></td><td class="success"><strong>63</strong></td></tr>
+                    </table>
+                </div>
+                <div>
+                    <h3>Key Validations</h3>
+                    <ul>
+                        <li class="success">✓ Little's Law: L = λW</li>
+                        <li class="success">✓ Stability: ρ < 1 enforced</li>
+                        <li class="success">✓ Erlang-C matches formula</li>
+                        <li class="success">✓ EVT GPD fitting validated</li>
+                        <li class="success">✓ Paper Figures 11-15 reproduced</li>
+                        <li class="success">✓ Extreme conditions (ρ>0.95, α<2)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            We take testing seriously. The project has 63 unit tests covering all major components. All tests pass. We specifically test extreme conditions - utilization above 95%, Pareto alpha below 2 where variance is infinite.
+        </div>
+    </div>
+
+    <!-- Slide 21: Contributions -->
+    <div class="slide" id="slide21">
+        <span class="slide-number">21/25</span>
+        <h2>Summary of Contributions</h2>
+        <div class="content">
+            <div class="card">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="success">1. ✅ VALIDATED</span> — Reproduced Li et al. (2015) with <15% error
+                </p>
+            </div>
+            <div class="card">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="success">2. ✅ EXTENDED</span> — Added Pareto heavy-tailed distributions (M/G/N)
+                </p>
+            </div>
+            <div class="card" style="border: 2px solid #ff6b6b;">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="highlight">3. ✅ DISCOVERED</span> — Paper underestimates P99 tail risk by <strong>45%</strong>! ⭐
+                </p>
+            </div>
+            <div class="card">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="success">4. ✅ INTEGRATED</span> — Raft, Vector Clocks, 2PC protocols
+                </p>
+            </div>
+            <div class="card">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="success">5. ✅ BUILT</span> — Full-stack React + FastAPI + SimPy platform
+                </p>
+            </div>
+            <div class="card">
+                <p style="font-size: 1.2em; margin: 15px 0;">
+                    <span class="success">6. ✅ ADDRESSED</span> — Heterogeneous servers (paper's future work)
+                </p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Let me summarize our contributions. First, we validated the base paper. Second, we extended with heavy-tailed distributions. Third - the key finding - we discovered the paper underestimates tail latency by 45%. Fourth, we integrated distributed protocols. Fifth, we built a full-stack platform. Sixth, we addressed heterogeneous servers.
+        </div>
+    </div>
+
+    <!-- Slide 22: Practical Implications -->
+    <div class="slide" id="slide22">
+        <span class="slide-number">22/25</span>
+        <h2>Practical Implications for System Designers</h2>
+        <div class="content">
+            <div class="two-column">
+                <div>
+                    <h3>🎯 For Capacity Planning</h3>
+                    <ul>
+                        <li>Add 20-50% more capacity than M/M/N suggests</li>
+                        <li>Use Whitt approximation instead of Kingman</li>
+                        <li>Validate with simulation before deployment</li>
+                    </ul>
+                    
+                    <h3 style="margin-top: 30px;">📊 For Monitoring</h3>
+                    <ul>
+                        <li>Track P99 and P99.9, not just average</li>
+                        <li>Alert on tail latency spikes</li>
+                        <li>Identify "elephant" requests (>10x mean)</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>🔧 For Architecture</h3>
+                    <ul>
+                        <li>Implement request timeouts</li>
+                        <li>Use circuit breakers for slow services</li>
+                        <li>Consider request hedging for critical paths</li>
+                    </ul>
+                    
+                    <div class="card" style="margin-top: 30px; border: 2px solid #ffd43b;">
+                        <div class="card-title">⚠️ Warning</div>
+                        <p>If your workload has heavy tails (video, ML, ETL), traditional queueing formulas <span class="highlight">WILL mislead you!</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            What does this mean for practitioners? Don't trust exponential assumptions. Always measure P99, not just average. Use simulation to validate. Over-provision for heavy-tailed workloads. Monitor for elephant requests.
+        </div>
+    </div>
+
+    <!-- Slide 23: Limitations -->
+    <div class="slide" id="slide23">
+        <span class="slide-number">23/25</span>
+        <h2>Limitations & Future Work</h2>
+        <div class="content">
+            <div class="two-column">
+                <div>
+                    <h3>⚠️ Current Limitations</h3>
+                    <div class="card">
+                        <p><strong>1. No Formal Verification</strong></p>
+                        <p style="color: #888;">CPN can prove deadlock-free; SimPy can only demonstrate</p>
+                    </div>
+                    <div class="card">
+                        <p><strong>2. Simplified Network</strong></p>
+                        <p style="color: #888;">Constant delay D; real networks vary</p>
+                    </div>
+                    <div class="card">
+                        <p><strong>3. 2PC Integration</strong></p>
+                        <p style="color: #888;">Overhead not in queue model; separate simulation</p>
+                    </div>
+                </div>
+                <div>
+                    <h3>🚀 Future Enhancements</h3>
+                    <div class="card">
+                        <p><strong>1. TLA+ Specification</strong></p>
+                        <p style="color: #888;">Formal verification for Raft and 2PC</p>
+                    </div>
+                    <div class="card">
+                        <p><strong>2. Variable Network Delay</strong></p>
+                        <p style="color: #888;">Model latency as Pareto or log-normal</p>
+                    </div>
+                    <div class="card">
+                        <p><strong>3. Auto-Scaling Simulation</strong></p>
+                        <p style="color: #888;">Dynamic server provisioning</p>
+                    </div>
+                    <div class="card">
+                        <p><strong>4. Multi-Tenant Isolation</strong></p>
+                        <p style="color: #888;">Resource contention model</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Let me be honest about limitations. We can't formally prove properties like the paper's CPN approach. Our network model uses constant delay. The 2PC overhead isn't integrated into queue service times. For future work, we'd like to add TLA+ verification, model variable network delays, and simulate auto-scaling.
+        </div>
+    </div>
+
+    <!-- Slide 24: Conclusion -->
+    <div class="slide" id="slide24">
+        <span class="slide-number">24/25</span>
+        <h2>Key Takeaways</h2>
+        <div class="content">
+            <div class="card" style="padding: 30px; margin: 20px 0; border-left: 5px solid #e74c3c;">
+                <h3 style="color: #e74c3c;">1️⃣ Exponential Assumptions are DANGEROUS</h3>
+                <p style="font-size: 1.2em; margin-top: 10px;">
+                    Real workloads have heavy tails. Ignoring them leads to under-provisioned systems.
+                </p>
+                <p style="color: #888; margin-top: 10px;">Paper: 4.25s P99 → Reality: 7.81s P99</p>
+            </div>
+            
+            <div class="card" style="padding: 30px; margin: 20px 0; border-left: 5px solid #3498db;">
+                <h3 style="color: #3498db;">2️⃣ Simulation is ESSENTIAL</h3>
+                <p style="font-size: 1.2em; margin-top: 10px;">
+                    Analytical formulas are approximations. For heavy tails, you need simulation.
+                </p>
+                <p style="color: #888; margin-top: 10px;">M/G/N has NO exact formula!</p>
+            </div>
+            
+            <div class="card" style="padding: 30px; margin: 20px 0; border-left: 5px solid #27ae60;">
+                <h3 style="color: #27ae60;">3️⃣ Capacity is the SOLUTION</h3>
+                <p style="font-size: 1.2em; margin-top: 10px;">
+                    When you have heavy tails, add more servers than the formulas suggest.
+                </p>
+                <p style="color: #888; margin-top: 10px;">N=1 → N=2: 93% improvement in P99</p>
+            </div>
+        </div>
+        <div class="speaker-notes">
+            Three takeaways: One - exponential assumptions are dangerous. Two - simulation is essential. Three - capacity is the solution. When you have heavy tails, add more servers than the formulas suggest.
+        </div>
+    </div>
+
+    <!-- Slide 25: Questions -->
+    <div class="slide title-slide" id="slide25">
+        <span class="slide-number">25/25</span>
+        <h1>Questions?</h1>
+        <p class="subtitle">🎤</p>
+        <br>
+        <div style="display: flex; gap: 30px; justify-content: center; margin: 30px 0;">
+            <div class="card" style="padding: 20px 40px;">
+                <div class="card-title">🖥️ Run Simulation</div>
+            </div>
+            <div class="card" style="padding: 20px 40px;">
+                <div class="card-title">📝 Code Walkthrough</div>
+            </div>
+            <div class="card" style="padding: 20px 40px;">
+                <div class="card-title">📊 Results Explorer</div>
+            </div>
+        </div>
+        <br>
+        <div style="color: #888;">
+            <p>📁 Project: distributed-systems-project/</p>
+            <p>📖 Docs: README.md, MATHEMATICAL_GUIDE.md</p>
+            <p>🧪 Tests: pytest tests/ -v (63 tests)</p>
+        </div>
+        <br><br>
+        <p style="font-size: 1.2em;">Thank you for your attention!</p>
+        <p style="color: #888;">Bhuvana Komati | CS 273 - Distributed Systems | Fall 2025</p>
+        
+        <div class="speaker-notes">
+            Thank you for your attention. I'm happy to take questions. I can also do a live demo if you'd like to see a simulation running, a code walkthrough, or the results and visualizations we generated.
+        </div>
+    </div>
+
+    <!-- Initialize Mermaid -->
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            securityLevel: 'loose'
+        });
+
+        // Navigation
+        let currentSlide = 1;
+        const totalSlides = 25;
+
+        function showSlide(n) {
+            if (n < 1) n = 1;
+            if (n > totalSlides) n = totalSlides;
+            currentSlide = n;
+            document.getElementById(`slide${n}`).scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function nextSlide() {
+            showSlide(currentSlide + 1);
+        }
+
+        function prevSlide() {
+            showSlide(currentSlide - 1);
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+                nextSlide();
+            } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                prevSlide();
+            }
+        });
+
+        // Update current slide on scroll
+        window.addEventListener('scroll', () => {
+            const slides = document.querySelectorAll('.slide');
+            slides.forEach((slide, index) => {
+                const rect = slide.getBoundingClientRect();
+                if (rect.top >= 0 && rect.top < window.innerHeight / 2) {
+                    currentSlide = index + 1;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
