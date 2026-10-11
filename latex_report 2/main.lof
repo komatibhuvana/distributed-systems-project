@@ -1,0 +1,20 @@
+\contentsline {figure}{\numberline {1}{\ignorespaces Tandem Queue Architecture (Conceptual)}}{7}{figure.caption.1}%
+\contentsline {figure}{\numberline {2}{\ignorespaces Tandem Queue Architecture: Two-stage message broker with traffic amplification from retransmissions}}{8}{figure.caption.2}%
+\contentsline {figure}{\numberline {3}{\ignorespaces M/M/N Validation against analytical solutions}}{8}{figure.caption.4}%
+\contentsline {figure}{\numberline {4}{\ignorespaces Mean Delivery Time vs Number of Threads (Figure 11 from base paper)}}{9}{figure.caption.5}%
+\contentsline {figure}{\numberline {5}{\ignorespaces Comparison of Exponential vs Pareto tail behavior}}{12}{figure.caption.6}%
+\contentsline {figure}{\numberline {6}{\ignorespaces Detailed Heavy Tail Impact Analysis}}{13}{figure.caption.7}%
+\contentsline {figure}{\numberline {7}{\ignorespaces Threading Model Comparison: Dedicated vs Shared}}{16}{figure.caption.10}%
+\contentsline {figure}{\numberline {8}{\ignorespaces Queue Length Validation (reproducing Figure 12 from base paper)}}{17}{figure.caption.11}%
+\contentsline {figure}{\numberline {9}{\ignorespaces Utilization Validation (reproducing Figure 13 from base paper)}}{18}{figure.caption.12}%
+\contentsline {figure}{\numberline {10}{\ignorespaces Detailed M/M/N Validation Results}}{18}{figure.caption.13}%
+\contentsline {figure}{\numberline {11}{\ignorespaces The Reality Gap: M/M/N vs M/G/N with Pareto service times}}{19}{figure.caption.14}%
+\contentsline {figure}{\numberline {12}{\ignorespaces Tail Risk Assessment: EVT-based estimation vs Gaussian approximation}}{20}{figure.caption.15}%
+\contentsline {figure}{\numberline {13}{\ignorespaces Load Testing Results across different arrival rates}}{24}{figure.caption.16}%
+\contentsline {figure}{\numberline {14}{\ignorespaces 95\% Confidence Intervals for simulation results}}{25}{figure.caption.17}%
+\contentsline {figure}{\numberline {15}{\ignorespaces Convergence Test: Simulation stabilizes after ~10,000 messages}}{25}{figure.caption.18}%
+\contentsline {figure}{\numberline {16}{\ignorespaces Additional Convergence Check}}{26}{figure.caption.19}%
+\contentsline {figure}{\numberline {17}{\ignorespaces How additional servers mitigate heavy-tail impact}}{27}{figure.caption.20}%
+\contentsline {figure}{\numberline {18}{\ignorespaces Erlang-k distribution efficiency across different k values}}{27}{figure.caption.21}%
+\contentsline {figure}{\numberline {19}{\ignorespaces Warmup period validation showing transient removal}}{28}{figure.caption.22}%
+\contentsline {figure}{\numberline {20}{\ignorespaces Reproduction of Figures 14 and 15 from base paper}}{28}{figure.caption.23}%

@@ -1,0 +1,86 @@
+\contentsline {section}{\numberline {1}Abstract}{4}{section.1}%
+\contentsline {section}{\numberline {2}Introduction}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Background}{4}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}The Modeling Challenge}{5}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Project Objectives}{5}{subsection.2.3}%
+\contentsline {section}{\numberline {3}Problem Statement \& Motivation}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}What Cloud Systems Must Guarantee}{5}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}The Hidden Problem Chain}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Real-World Evidence of Heavy Tails}{6}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Base Paper Overview}{6}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Paper Details}{6}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Key Contributions of Base Paper}{6}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Paper's Assumptions (What We Address)}{6}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}The Foundation Established}{7}{subsection.4.4}%
+\contentsline {section}{\numberline {5}The Tandem Queue Model}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Architecture Overview}{7}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}System Parameters}{7}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Traffic Inflation: The Key Insight}{7}{subsection.5.3}%
+\contentsline {section}{\numberline {6}Mathematical Foundation: The 15 Equations}{9}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Section 1: M/M/N Baseline (Equations 1-5)}{9}{subsection.6.1}%
+\contentsline {subsubsection}{\numberline {6.1.1}Equation 1: Utilization ($\rho $)}{9}{subsubsection.6.1.1}%
+\contentsline {subsubsection}{\numberline {6.1.2}Equation 2: Traffic Intensity ($a$)}{10}{subsubsection.6.1.2}%
+\contentsline {subsubsection}{\numberline {6.1.3}Equation 3: Erlang-C Formula}{10}{subsubsection.6.1.3}%
+\contentsline {subsubsection}{\numberline {6.1.4}Equation 4: Mean Queue Wait Time}{10}{subsubsection.6.1.4}%
+\contentsline {subsubsection}{\numberline {6.1.5}Equation 5: Little's Law}{10}{subsubsection.6.1.5}%
+\contentsline {subsection}{\numberline {6.2}Section 2: Heavy-Tailed Distributions (Equations 6-10)}{10}{subsection.6.2}%
+\contentsline {subsubsection}{\numberline {6.2.1}Equation 6: Pareto Probability Density Function}{10}{subsubsection.6.2.1}%
+\contentsline {subsubsection}{\numberline {6.2.2}Equation 7: Pareto Mean}{10}{subsubsection.6.2.2}%
+\contentsline {subsubsection}{\numberline {6.2.3}Equation 8: Pareto Variance}{10}{subsubsection.6.2.3}%
+\contentsline {subsubsection}{\numberline {6.2.4}Equation 9: Coefficient of Variation}{11}{subsubsection.6.2.4}%
+\contentsline {subsubsection}{\numberline {6.2.5}Equation 10: Kingman's M/G/N Approximation}{11}{subsubsection.6.2.5}%
+\contentsline {subsection}{\numberline {6.3}Section 3: Threading Models (Equations 11-15)}{11}{subsection.6.3}%
+\contentsline {subsubsection}{\numberline {6.3.1}Equation 11: Dedicated Threading}{11}{subsubsection.6.3.1}%
+\contentsline {subsubsection}{\numberline {6.3.2}Equation 12: Shared Threading}{11}{subsubsection.6.3.2}%
+\contentsline {subsubsection}{\numberline {6.3.3}Equation 13: Shared Effective Service Rate}{11}{subsubsection.6.3.3}%
+\contentsline {subsubsection}{\numberline {6.3.4}Equation 14: Threading Efficiency Ratio}{11}{subsubsection.6.3.4}%
+\contentsline {subsubsection}{\numberline {6.3.5}Equation 15: P99 Latency Approximation}{11}{subsubsection.6.3.5}%
+\contentsline {section}{\numberline {7}Heavy-Tailed Distributions: The Key Insight}{12}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Why Heavy Tails Matter}{12}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}The Pareto Principle (80-20 Rule)}{13}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Variance Explosion}{14}{subsection.7.3}%
+\contentsline {section}{\numberline {8}System Architecture \& Implementation}{14}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Technology Stack}{14}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Architecture Diagram}{14}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Why SimPy vs Colored Petri Nets?}{14}{subsection.8.3}%
+\contentsline {subsection}{\numberline {8.4}Code Example: M/M/N Queue}{15}{subsection.8.4}%
+\contentsline {subsection}{\numberline {8.5}Threading Model Implementation}{16}{subsection.8.5}%
+\contentsline {section}{\numberline {9}The ``Reality Gap'' Discovery}{16}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Validating the Baseline Model}{16}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Mean Latency Comparison}{19}{subsection.9.2}%
+\contentsline {section}{\numberline {10}Tail Risk Analysis (P99 Latency)}{20}{section.10}%
+\contentsline {subsection}{\numberline {10.1}CRITICAL FINDING: P99 Underestimation}{20}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Why This Matters}{20}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}The Gaussian Fallacy}{20}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}The Solution: Extreme Value Theory (EVT)}{21}{subsection.10.4}%
+\contentsline {subsection}{\numberline {10.5}Validating M/G/N Approximations}{21}{subsection.10.5}%
+\contentsline {section}{\numberline {11}Distributed Systems Integration}{21}{section.11}%
+\contentsline {subsection}{\numberline {11.1}Extending Beyond Queues}{21}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}Threading Architectures}{21}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}Two-Phase Commit Implementation}{21}{subsection.11.3}%
+\contentsline {subsection}{\numberline {11.4}Raft Consensus Protocol}{22}{subsection.11.4}%
+\contentsline {subsection}{\numberline {11.5}Vector Clocks for Causality Tracking}{22}{subsection.11.5}%
+\contentsline {subsection}{\numberline {11.6}Visibility Timeout (SQS-Style Reliability)}{23}{subsection.11.6}%
+\contentsline {subsection}{\numberline {11.7}Heterogeneity \& Work Stealing}{23}{subsection.11.7}%
+\contentsline {subsection}{\numberline {11.8}Priority Queues (M/M/N with Priority Classes)}{23}{subsection.11.8}%
+\contentsline {subsection}{\numberline {11.9}Finite Capacity Queues (M/M/N/K)}{23}{subsection.11.9}%
+\contentsline {subsection}{\numberline {11.10}Extreme Value Theory (EVT) for Tail Estimation}{24}{subsection.11.10}%
+\contentsline {section}{\numberline {12}Experimental Results \& Validation}{24}{section.12}%
+\contentsline {subsection}{\numberline {12.1}Baseline Validation}{24}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}Load Testing \& Confidence Intervals}{24}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}Convergence Testing}{25}{subsection.12.3}%
+\contentsline {subsection}{\numberline {12.4}Mitigation Scaling}{27}{subsection.12.4}%
+\contentsline {subsection}{\numberline {12.5}Erlang-k Efficiency}{27}{subsection.12.5}%
+\contentsline {subsection}{\numberline {12.6}Warmup Validation}{28}{subsection.12.6}%
+\contentsline {subsection}{\numberline {12.7}Paper Reproduction (Figures 14 \& 15)}{28}{subsection.12.7}%
+\contentsline {subsection}{\numberline {12.8}Testing Summary}{28}{subsection.12.8}%
+\contentsline {subsection}{\numberline {12.9}Experiment Scripts}{29}{subsection.12.9}%
+\contentsline {subsection}{\numberline {12.10}Generated Data Files}{29}{subsection.12.10}%
+\contentsline {section}{\numberline {13}Key Discoveries}{29}{section.13}%
+\contentsline {subsection}{\numberline {13.1}Summary of Findings}{29}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}Comparison: Li et al. (2015) vs. This Framework}{29}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}Practitioner Guidelines}{30}{subsection.13.3}%
+\contentsline {section}{\numberline {14}Conclusion \& Future Work}{30}{section.14}%
+\contentsline {subsection}{\numberline {14.1}Conclusions}{30}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}Future Work}{30}{subsection.14.2}%
+\contentsline {section}{\numberline {15}References}{30}{section.15}%
