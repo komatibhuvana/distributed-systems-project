@@ -1,0 +1,48 @@
+{
+  "script": "experiments/paper2_protocols.py",
+  "quick": false,
+  "runtime_s": 474.0,
+  "procs": 12,
+  "N_THREADS": 10,
+  "MU": 12.0,
+  "SIM_DURATION": 1000.0,
+  "WARMUP": 100.0,
+  "N_REPS": 10,
+  "BASE_SEED": 1000,
+  "seeds": "BASE_SEED + rep (queues); seed index (Raft, VC)",
+  "TWOPC_OVERHEAD_SAMPLES": 200000,
+  "RAFT_PARAM_SETS(tmin,tmax,heartbeat,one_way_delay,jitter)": {
+    "default_model": [
+      10.0,
+      20.0,
+      5.0,
+      0.0,
+      0.0
+    ],
+    "realistic_lan": [
+      0.15,
+      0.3,
+      0.05,
+      0.002,
+      0.003
+    ],
+    "realistic_wan": [
+      0.15,
+      0.3,
+      0.05,
+      0.02,
+      0.01
+    ]
+  },
+  "RAFT_ELECTION_SEEDS": 30,
+  "RAFT_COMMIT_SEEDS": 20,
+  "RAFT_APPEND_RATE": 100.0,
+  "RAFT_QUEUE_LAMBDAS": [
+    60.0,
+    100.0
+  ],
+  "CAP_DURATION": 300.0,
+  "CAP_WARMUP": 30.0,
+  "vector_clock_delay_mean_s": 0.01,
+  "vector_clock_duration_s": 30.0
+}

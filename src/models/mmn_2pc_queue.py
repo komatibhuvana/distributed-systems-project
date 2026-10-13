@@ -14,7 +14,15 @@ In reality, distributed reliability protocols (like 2PC) add significant overhea
 - Blocking during vote collection
 - Timeout handling
 
-This implementation shows that 2PC can reduce throughput by 20-40%!
+The size of the effect depends on RTT, replica count, replica availability and
+vote timeout; see TwoPhaseCommitService for the exact E[O]/Var[O] and
+experiments/paper2_protocols.py (results/paper2/twopc_*.csv) for measured
+numbers. (An earlier docstring asserted "20-40% throughput reduction" without
+a supporting measurement.)
+
+Note: MMNConfig only validates the BASE utilization λ/(N·μ). With 2PC the
+effective utilization is ρ_eff = λ·E[S_total]/N, which can exceed 1 even when
+the config validates; check `effective_utilization()` before trusting results.
 """
 
 import simpy
@@ -41,7 +49,10 @@ class MMN2PCQueue(QueueModel):
     def __init__(self, env: simpy.Environment, config: MMNConfig,
                  num_replicas: int = 3,
                  network_rtt_mean: float = 0.010,
-                 replica_availability: float = 0.99):
+                 replica_availability: float = 0.99,
+                 network_rtt_std: float = 0.002,
+                 vote_timeout: float = 1.0,
+                 verbose: bool = True):
         """
         Args:
             env: SimPy environment
@@ -49,7 +60,16 @@ class MMN2PCQueue(QueueModel):
             num_replicas: Number of replicas for 2PC (default: 3)
             network_rtt_mean: Mean network RTT in seconds (default: 10ms)
             replica_availability: Probability replica responds (default: 0.99)
+            network_rtt_std: Std dev of RTT in seconds (default: 2ms, same as
+                TwoPhaseCommitService default)
+            vote_timeout: Vote-collection timeout in seconds (default: 1.0)
+            verbose: Print summary in run() (default: True, as before)
         """
+        # Bug fix: QueueModel.__init__ calls self.model_name(), which needs
+        # num_replicas, so it must be set BEFORE super().__init__ (previously
+        # constructing MMN2PCQueue raised AttributeError).
+        self.num_replicas = num_replicas
+        self.network_rtt_mean = network_rtt_mean
         super().__init__(env, config)
 
         # Create base exponential distribution
@@ -60,11 +80,18 @@ class MMN2PCQueue(QueueModel):
             base_distribution=base_dist,
             num_replicas=num_replicas,
             network_rtt_mean=network_rtt_mean,
-            replica_availability=replica_availability
+            network_rtt_std=network_rtt_std,
+            replica_availability=replica_availability,
+            vote_timeout=vote_timeout
         )
 
         self.num_replicas = num_replicas
         self.network_rtt_mean = network_rtt_mean
+        self.verbose = verbose
+
+    def effective_utilization(self) -> float:
+        """ρ_eff = λ·E[S_total]/N (2PC overhead included). Unstable if >= 1."""
+        return self.config.arrival_rate * self.service_dist.mean() / self.config.num_threads
 
     def model_name(self) -> str:
         return f"M/M/{self.config.num_threads} + 2PC({self.num_replicas} replicas)"
@@ -88,6 +115,9 @@ class MMN2PCQueue(QueueModel):
 
         # Run simulation
         self.env.run(until=self.config.sim_duration)
+
+        if not self.verbose:
+            return self.metrics
 
         # Print results including 2PC metrics
         print(f"Simulation complete:")
@@ -131,6 +161,11 @@ class MGN2PCQueue(QueueModel):
             network_rtt_mean: Mean network RTT in seconds (default: 10ms)
             replica_availability: Probability replica responds (default: 0.99)
         """
+        # Bug fix: attributes used by model_name() must exist before
+        # QueueModel.__init__ calls it.
+        self.num_replicas = num_replicas
+        self.network_rtt_mean = network_rtt_mean
+        self.base_distribution = config.distribution
         super().__init__(env, config)
 
         # Create base distribution (Pareto, lognormal, etc.)

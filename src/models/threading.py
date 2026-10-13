@@ -66,16 +66,15 @@ class DedicatedThreadingQueue(QueueModel):
         Checks if connection slots available. If not, rejects the message.
         """
         arrival_time = self.env.now
-
-        # Skip warmup period
-        if arrival_time < self.config.warmup_time:
-            yield self.env.timeout(self.get_service_time())
-            return
+        # Warmup messages are processed normally (so measurement starts from
+        # steady state, as in QueueModel) but not recorded
+        warmup = arrival_time < self.config.warmup_time
 
         # Check if we can accept this connection (Equation 11: Nmax = Nthreads/2)
         if self.active_connections >= self.max_connections:
             # Reject message - no available connection slots
-            self.rejected_count += 1
+            if not warmup:
+                self.rejected_count += 1
             return
 
         # Accept connection
@@ -97,11 +96,12 @@ class DedicatedThreadingQueue(QueueModel):
             departure_time = self.env.now
 
             # Record metrics
-            self.metrics.arrival_times.append(arrival_time)
-            self.metrics.wait_times.append(wait_time)
-            self.metrics.service_times.append(service_time)
-            self.metrics.queue_lengths.append(queue_length)
-            self.metrics.departure_times.append(departure_time)
+            if not warmup:
+                self.metrics.arrival_times.append(arrival_time)
+                self.metrics.wait_times.append(wait_time)
+                self.metrics.service_times.append(service_time)
+                self.metrics.queue_lengths.append(queue_length)
+                self.metrics.departure_times.append(departure_time)
 
         # Release connection
         self.active_connections -= 1
@@ -194,11 +194,8 @@ class SharedThreadingQueue(QueueModel):
         increased service time due to context switching overhead.
         """
         arrival_time = self.env.now
-
-        # Skip warmup period
-        if arrival_time < self.config.warmup_time:
-            yield self.env.timeout(self.base_service_dist.sample())
-            return
+        # Warmup messages are processed normally but not recorded
+        warmup = arrival_time < self.config.warmup_time
 
         # Request threads from shared pool
         with self.threads.request() as req:
@@ -221,11 +218,12 @@ class SharedThreadingQueue(QueueModel):
             departure_time = self.env.now
 
             # Record metrics
-            self.metrics.arrival_times.append(arrival_time)
-            self.metrics.wait_times.append(wait_time)
-            self.metrics.service_times.append(service_time)
-            self.metrics.queue_lengths.append(queue_length)
-            self.metrics.departure_times.append(departure_time)
+            if not warmup:
+                self.metrics.arrival_times.append(arrival_time)
+                self.metrics.wait_times.append(wait_time)
+                self.metrics.service_times.append(service_time)
+                self.metrics.queue_lengths.append(queue_length)
+                self.metrics.departure_times.append(departure_time)
 
             # Release connection BEFORE exiting with block
             self.active_connections -= 1

@@ -360,7 +360,7 @@ class HeterogeneousMMNConfig(BaseModel):
     )
 
     # Server selection policy
-    selection_policy: Literal["random", "fastest_first", "round_robin", "shortest_queue", "work_stealing"] = Field(
+    selection_policy: Literal["random", "random_capacity", "fastest_first", "round_robin", "shortest_queue", "work_stealing"] = Field(
         default="random",
         description="Policy for selecting which server group to use"
     )
@@ -415,7 +415,31 @@ class HeterogeneousMMNConfig(BaseModel):
                 f"Reduce arrival_rate or add more servers/increase service rates."
             )
 
+        overloaded = [u for u in self.static_pool_utilizations() if u >= 1.0]
+        if overloaded:
+            print(
+                f"WARNING: '{self.selection_policy}' dispatch overloads a server pool "
+                f"(per-pool ρ = {max(overloaded):.3f} >= 1) even though aggregate "
+                f"ρ = {rho:.3f} < 1; that pool's queue grows without bound."
+            )
+
         return self
+
+    def static_pool_utilizations(self) -> List[float]:
+        """
+        Per-pool utilization ρ_i = λ_i / (n_i·μ_i) under a static split.
+
+        For "random" and "round_robin" each
+        server receives λ/N, so λ_i = λ·n_i/N; for "random_capacity" λ_i is
+        proportional to n_i·μ_i. Dynamic policies (shortest_queue, work_stealing,
+        fastest_first) have no static split and return the aggregate ρ.
+        """
+        n_total = sum(g.count for g in self.server_groups)
+        capacity = sum(g.count * g.service_rate for g in self.server_groups)
+        if self.selection_policy in ("random", "round_robin"):
+            return [self.arrival_rate * g.count / n_total / (g.count * g.service_rate)
+                    for g in self.server_groups]
+        return [self.arrival_rate / capacity for _ in self.server_groups]
 
     @property
     def total_servers(self) -> int:

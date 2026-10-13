@@ -62,6 +62,12 @@ class MEkNQueue:
         self.env = env
         self.config = config
 
+        # Seed the global NumPy RNG (used by np.random.exponential for arrivals
+        # and by scipy.stats.erlang.rvs for service). Previously random_seed was
+        # accepted but ignored, so runs were not reproducible.
+        if config.random_seed is not None:
+            np.random.seed(config.random_seed)
+
         # Create server pool
         self.servers = simpy.Resource(env, capacity=config.num_threads)
 

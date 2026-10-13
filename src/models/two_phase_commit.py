@@ -73,6 +73,7 @@ class TwoPhaseCoordinator:
         self.committed_transactions = 0
         self.aborted_transactions = 0
         self.timeout_aborts = 0
+        self.decision_latencies: Dict[int, float] = {}
 
     def register_participant(self, participant_id: int, channel: simpy.Store):
         """Register a participant node"""
@@ -166,6 +167,12 @@ class TwoPhaseCoordinator:
             if not all_votes_received:
                 self.timeout_aborts += 1
 
+        # Instrumentation: time from PREPARE to decision. NOTE: this model has
+        # no network delay and collects votes by polling every 0.1 s, so this
+        # latency is a polling artifact (multiples of 0.1 s), not a network
+        # measurement.
+        self.decision_latencies[transaction_id] = self.env.now - start_time
+
         # Send decision to all participants
         for participant_id in participant_ids:
             if participant_id in self.participant_channels:
@@ -220,6 +227,7 @@ class TwoPhaseParticipant:
 
         # Transaction state
         self.prepared_transactions: Set[int] = set()
+        self.voted_no_transactions: Set[int] = set()
         self.committed_transactions: Set[int] = set()
         self.aborted_transactions: Set[int] = set()
 
@@ -275,9 +283,11 @@ class TwoPhaseParticipant:
             vote = True
             self.votes_yes += 1
         else:
-            # Vote NO - cannot commit
+            # Vote NO - cannot commit (participant unilaterally aborts; it
+            # still applies the coordinator's ABORT decision below)
             vote = False
             self.votes_no += 1
+            self.voted_no_transactions.add(transaction_id)
 
         # Send vote to coordinator
         if self.coordinator_channel:
@@ -313,10 +323,17 @@ class TwoPhaseParticipant:
         """
         transaction_id = msg.transaction_id
 
-        if transaction_id in self.prepared_transactions:
+        # Bug fix: participants that voted NO must also record the ABORT.
+        # Previously only PREPARED (YES-voting) participants counted aborts,
+        # so per-participant abort counts differed and the atomicity check in
+        # experiments/two_phase_commit_validation.py reported False even
+        # though every participant received the same decision.
+        if (transaction_id in self.prepared_transactions or
+                transaction_id in self.voted_no_transactions):
             # Abort transaction
             self.aborted_transactions.add(transaction_id)
             self.prepared_transactions.discard(transaction_id)
+            self.voted_no_transactions.discard(transaction_id)
             self.aborts_executed += 1
 
             # In real system: release locks, rollback changes, etc.

@@ -11,6 +11,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import random
 import simpy
 import numpy as np
 import pandas as pd
@@ -42,7 +43,9 @@ class CloudBrokerSimulation:
                  ordering_mode: str = "out_of_order",
                  sim_duration: float = 1000,
                  warmup_time: float = 100,
-                 random_seed: int = 42):
+                 random_seed: int = 42,
+                 node_mtbf: float = None,
+                 node_mttr: float = 10.0):
         """
         Args:
             arrival_rate: Message arrival rate (messages/sec)
@@ -67,8 +70,10 @@ class CloudBrokerSimulation:
         self.warmup_time = warmup_time
         self.random_seed = random_seed
 
-        # Initialize
+        # Initialize (the broker samples nodes/messages with the stdlib
+        # `random` module, so both generators must be seeded)
         np.random.seed(random_seed)
+        random.seed(random_seed)
         self.env = simpy.Environment()
 
         # Create distributed broker
@@ -76,8 +81,12 @@ class CloudBrokerSimulation:
             env=self.env,
             num_nodes=num_storage_nodes,
             replication_factor=replication_factor,
-            ordering_mode=ordering_mode
+            ordering_mode=ordering_mode,
+            node_mtbf=node_mtbf,
+            node_mttr=node_mttr
         )
+        self.node_mtbf = node_mtbf
+        self.node_mttr = node_mttr
 
         # Metrics
         self.message_id_counter = 0
@@ -88,6 +97,8 @@ class CloudBrokerSimulation:
         # Processing metrics
         self.latencies = []
         self.retries = []
+        self.duplicate_deliveries = 0
+        self.first_receive_delays = []  # publish -> first delivery attempt
 
     def run(self, num_consumers: int = 10):
         """
@@ -167,18 +178,27 @@ class CloudBrokerSimulation:
 
         May succeed or fail based on failure rate
         """
+        # Receipt handle: an ack is only valid for the receive that issued it
+        # (as in SQS). If the visibility timeout expired mid-processing and the
+        # message was redelivered, this consumer's ack is stale.
+        receipt = message.receive_count
+
         # Processing time
         processing_time = np.random.exponential(self.processing_time_mean)
         yield self.env.timeout(processing_time)
 
         # Check if processing succeeds
         if np.random.random() > self.processing_failure_rate:
-            # Success - acknowledge message
-            self.broker.acknowledge_message(message)
+            if message.receive_count != receipt or not self.broker.acknowledge_message(message):
+                # Work was done but the message was already redelivered
+                if self.env.now >= self.warmup_time:
+                    self.duplicate_deliveries += 1
+                return
 
             if self.env.now >= self.warmup_time:
                 latency = self.env.now - message.arrival_time
                 self.latencies.append(latency)
+                self.first_receive_delays.append(message.first_receive_time - message.arrival_time)
                 self.retries.append(message.receive_count - 1)  # -1 because we count retries
                 self.processed_messages.append(message)
         else:
@@ -201,18 +221,36 @@ class CloudBrokerSimulation:
         broker_metrics = self.broker.get_broker_metrics()
         node_metrics = self.broker.get_node_metrics()
 
+        # Logical (per message ID) outcomes for messages published after warmup
+        # and early enough to have had max_receive_count (3) delivery attempts
+        cutoff = self.sim_duration - 3 * self.visibility_timeout - 10
+        published_ids = {m.id for m in self.published_messages if m.arrival_time <= cutoff}
+        delivered_ids = {m.id for m in self.processed_messages}
+        dlq_ids = set()
+        for node in self.broker.nodes:
+            dlq_ids.update(node.visibility_manager.dlq_messages.keys())
+        delivered = len(published_ids & delivered_ids)
+        dead_lettered = len(published_ids & dlq_ids)
+
         results = {
             # Message counts
             'total_published': total_published,
             'total_processed': total_processed,
             'total_failed': total_failed,
             'processing_success_rate': total_processed / total_published if total_published > 0 else 0,
+            'delivery_ratio': delivered / len(published_ids) if published_ids else 0,
+            'dlq_ratio': dead_lettered / len(published_ids) if published_ids else 0,
+            'duplicate_deliveries': self.duplicate_deliveries,
+            'copies_written': sum(node.messages_stored for node in self.broker.nodes),
+            'node_outages': self.broker.total_outages,
 
             # Latency metrics
             'mean_latency': np.mean(latencies_array),
             'median_latency': np.median(latencies_array),
             'p95_latency': np.percentile(latencies_array, 95),
             'p99_latency': np.percentile(latencies_array, 99),
+            'mean_first_receive': float(np.mean(self.first_receive_delays)) if self.first_receive_delays else 0.0,
+            'p99_first_receive': float(np.percentile(self.first_receive_delays, 99)) if self.first_receive_delays else 0.0,
 
             # Retry metrics
             'mean_retries': np.mean(retries_array),
@@ -240,194 +278,146 @@ class CloudBrokerSimulation:
         return results
 
 
+SEEDS = list(range(1, 11))  # 10 independent replications per configuration
+
+
+def _ci95(values):
+    """Mean and 95% t-confidence half-width"""
+    from scipy import stats
+    values = np.asarray(values, dtype=float)
+    n = len(values)
+    if n < 2:
+        return float(values.mean()), 0.0
+    half = stats.t.ppf(0.975, n - 1) * values.std(ddof=1) / np.sqrt(n)
+    return float(values.mean()), float(half)
+
+
+METRICS = ['mean_latency', 'p99_latency', 'mean_first_receive', 'p99_first_receive',
+           'mean_retries', 'throughput',
+           'delivery_ratio', 'dlq_ratio', 'duplicate_rate', 'copies_per_message']
+
+
+def _replicate(label, num_consumers=10, seeds=SEEDS, **kwargs):
+    """Run one configuration over SEEDS; return (per-run rows, summary row)"""
+    runs = []
+    for seed in seeds:
+        sim = CloudBrokerSimulation(random_seed=seed, **kwargs)
+        r = sim.run(num_consumers=num_consumers)
+        published = max(r['total_published'], 1)
+        runs.append({
+            **label, 'seed': seed,
+            'mean_latency': r['mean_latency'],
+            'p99_latency': r['p99_latency'],
+            'mean_first_receive': r['mean_first_receive'],
+            'p99_first_receive': r['p99_first_receive'],
+            'mean_retries': r['mean_retries'],
+            'throughput': r['throughput'],
+            'delivery_ratio': r['delivery_ratio'],
+            'dlq_ratio': r['dlq_ratio'],
+            'duplicate_rate': r['duplicate_deliveries'] / published,
+            'copies_per_message': r['copies_written'] / max(r['broker_metrics']['total_messages_published'], 1),
+            'node_outages': r['node_outages'],
+        })
+    summary = dict(label)
+    for m in METRICS:
+        mean, half = _ci95([run[m] for run in runs])
+        summary[m] = mean
+        summary[m + '_ci95'] = half
+    summary['replications'] = len(runs)
+    return runs, summary
+
+
 def experiment_visibility_timeout():
     """
     Experiment 1: Visibility Timeout Impact
 
-    Test different visibility timeout values and measure:
-    - Success rate
-    - Latency
-    - Retry count
+    Mean processing time is 0.5 s (exponential), so small VT values expire
+    while healthy consumers are still working (premature redelivery), and
+    large VT values delay the retry of genuinely failed messages.
     """
     print("="*70)
     print("EXPERIMENT: Visibility Timeout Impact")
     print("="*70)
 
-    timeout_values = [10, 30, 60, 120]
-    results = []
-
-    for timeout in timeout_values:
-        print(f"\nTesting visibility timeout = {timeout} seconds...")
-
-        # FIXED: Adjusted parameters for realistic success rates
-        # Processing time (0.5s) << visibility timeout (10-120s)
-        # This ensures messages can be processed before timeout
-        sim = CloudBrokerSimulation(
-            arrival_rate=10,  # Reduced from 50 to avoid queue buildup
-            processing_time_mean=0.5,  # Reduced from 5.0 - process in < 1 sec typically
-            processing_failure_rate=0.1,  # Reduced from 0.2 - 10% failure is more realistic
+    runs, summaries = [], []
+    for timeout in [0.5, 1, 2, 5, 10, 30, 60, 120]:
+        print(f"  VT = {timeout} s")
+        r, s = _replicate(
+            {'visibility_timeout': timeout},
+            arrival_rate=10,
+            processing_time_mean=0.5,
+            processing_failure_rate=0.1,
             visibility_timeout=timeout,
             num_storage_nodes=3,
             replication_factor=2,
-            sim_duration=500,
-            warmup_time=50,
-            random_seed=42
+            sim_duration=2000,
+            warmup_time=200,
         )
+        runs += r
+        summaries.append(s)
 
-        result = sim.run()
-        results.append({
-            'visibility_timeout': timeout,
-            'success_rate': result['processing_success_rate'],
-            'mean_latency': result['mean_latency'],
-            'p99_latency': result['p99_latency'],
-            'mean_retries': result['mean_retries'],
-            'throughput': result['throughput'],
-        })
-
-        print(f"  Success rate: {result['processing_success_rate']*100:.1f}%")
-        print(f"  Mean latency: {result['mean_latency']:.2f} sec")
-        print(f"  Mean retries: {result['mean_retries']:.2f}")
-
-    # Display results table
-    df = pd.DataFrame(results)
-    print("\n" + "="*70)
-    print("RESULTS SUMMARY")
-    print("="*70)
-    print(df.to_string(index=False))
-
-    return df
+    df = pd.DataFrame(summaries)
+    print(df[['visibility_timeout', 'mean_latency', 'p99_latency', 'mean_retries',
+              'duplicate_rate', 'delivery_ratio']].to_string(index=False))
+    return df, pd.DataFrame(runs)
 
 
 def experiment_replication_factor():
     """
     Experiment 2: Replication Factor Impact
 
-    Test different replication factors and measure:
-    - Reliability
-    - Storage overhead
-    - Performance
+    Without node failures replication can only cost storage, so each
+    replication factor is run with and without node outages
+    (MTBF 100 s, MTTR 20 s per node). 20 consumers are used so that polls
+    wasted on a down node (0.1 s back-off each) do not saturate the consumer
+    pool, which would otherwise dominate latency regardless of R.
     """
     print("\n" + "="*70)
     print("EXPERIMENT: Replication Factor Impact")
     print("="*70)
 
-    replication_factors = [1, 2, 3]
-    results = []
+    runs, summaries = [], []
+    for mtbf in [None, 100.0]:
+        for rep_factor in [1, 2, 3]:
+            print(f"  R = {rep_factor}, outages = {'on' if mtbf else 'off'}")
+            r, s = _replicate(
+                {'replication_factor': rep_factor, 'node_outages': 'on' if mtbf else 'off'},
+                num_consumers=20,
+                seeds=list(range(1, 31)),
+                arrival_rate=100,
+                processing_time_mean=0.05,
+                processing_failure_rate=0.1,
+                visibility_timeout=30,
+                num_storage_nodes=3,
+                replication_factor=rep_factor,
+                sim_duration=500,
+                warmup_time=50,
+                node_mtbf=mtbf,
+                node_mttr=20.0,
+            )
+            runs += r
+            summaries.append(s)
 
-    for rep_factor in replication_factors:
-        print(f"\nTesting replication factor = {rep_factor}...")
-
-        sim = CloudBrokerSimulation(
-            arrival_rate=100,
-            processing_time_mean=0.05,
-            processing_failure_rate=0.1,
-            visibility_timeout=30,
-            num_storage_nodes=3,
-            replication_factor=rep_factor,
-            sim_duration=500,
-            warmup_time=50,
-            random_seed=42
-        )
-
-        result = sim.run()
-        results.append({
-            'replication_factor': rep_factor,
-            'success_rate': result['processing_success_rate'],
-            'throughput': result['throughput'],
-            'total_stored': result['broker_metrics']['total_queue_depth'],
-            'unique_messages': result['broker_metrics']['unique_message_count'],
-        })
-
-        print(f"  Success rate: {result['processing_success_rate']*100:.1f}%")
-        print(f"  Throughput: {result['throughput']:.2f} msg/sec")
-        print(f"  Storage overhead: {rep_factor}x")
-
-    # Display results table
-    df = pd.DataFrame(results)
-    print("\n" + "="*70)
-    print("RESULTS SUMMARY")
-    print("="*70)
-    print(df.to_string(index=False))
-
-    return df
-
-
-def experiment_ordering_comparison():
-    """
-    Experiment 3: In-Order vs Out-of-Order Delivery
-
-    Compare performance of ordering modes
-    """
-    print("\n" + "="*70)
-    print("EXPERIMENT: Ordering Mode Comparison")
-    print("="*70)
-
-    ordering_modes = ["in_order", "out_of_order"]
-    results = []
-
-    for mode in ordering_modes:
-        print(f"\nTesting ordering mode = {mode}...")
-
-        sim = CloudBrokerSimulation(
-            arrival_rate=100,
-            processing_time_mean=0.05,
-            processing_failure_rate=0.1,
-            visibility_timeout=30,
-            num_storage_nodes=3,
-            replication_factor=3,
-            ordering_mode=mode,
-            sim_duration=500,
-            warmup_time=50,
-            random_seed=42
-        )
-
-        result = sim.run()
-        results.append({
-            'ordering_mode': mode,
-            'mean_latency': result['mean_latency'],
-            'p95_latency': result['p95_latency'],
-            'throughput': result['throughput'],
-        })
-
-        print(f"  Mean latency: {result['mean_latency']:.3f} sec")
-        print(f"  Throughput: {result['throughput']:.2f} msg/sec")
-
-    # Display results table
-    df = pd.DataFrame(results)
-    print("\n" + "="*70)
-    print("RESULTS SUMMARY")
-    print("="*70)
-    print(df.to_string(index=False))
-
-    return df
+    df = pd.DataFrame(summaries)
+    print(df[['node_outages', 'replication_factor', 'mean_latency', 'p99_latency',
+              'throughput', 'delivery_ratio', 'copies_per_message']].to_string(index=False))
+    return df, pd.DataFrame(runs)
 
 
 def main():
-    """Run all cloud broker experiments"""
+    """Run cloud broker experiments (ordering lives in cost_of_consistency.py)"""
     print("\n" + "="*70)
     print(" CLOUD MESSAGE BROKER SIMULATION")
-    print(" Li et al. (2015) Implementation")
     print("="*70)
 
-    # Run experiments
-    exp1_results = experiment_visibility_timeout()
-    exp2_results = experiment_replication_factor()
-    exp3_results = experiment_ordering_comparison()
+    vt_df, vt_runs = experiment_visibility_timeout()
+    rep_df, rep_runs = experiment_replication_factor()
 
-    # Save results
-    exp1_results.to_csv('experiments/visibility_timeout_results.csv', index=False)
-    exp2_results.to_csv('experiments/replication_factor_results.csv', index=False)
-    exp3_results.to_csv('experiments/ordering_mode_results.csv', index=False)
-
-    print("\n" + "="*70)
-    print("ALL EXPERIMENTS COMPLETED")
-    print("="*70)
-    print("\nKey Findings:")
-    print("1. Visibility timeout: Longer timeout → better success rate")
-    print("2. Replication: Higher replication → better reliability, more storage")
-    print("3. Ordering: Out-of-order → better performance (as expected)")
-    print("\nThis implementation correctly models Li et al. (2015) cloud message broker!")
-    print("="*70 + "\n")
+    vt_df.to_csv('experiments/visibility_timeout_results.csv', index=False)
+    vt_runs.to_csv('experiments/visibility_timeout_runs.csv', index=False)
+    rep_df.to_csv('experiments/replication_factor_results.csv', index=False)
+    rep_runs.to_csv('experiments/replication_factor_runs.csv', index=False)
+    print("\nSaved experiments/visibility_timeout_results.csv and replication_factor_results.csv")
 
 
 if __name__ == "__main__":

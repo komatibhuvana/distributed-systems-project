@@ -13,6 +13,8 @@ Features:
 
 import simpy
 import random
+import hashlib
+import bisect
 from typing import List, Optional, Dict
 from .cloud_message import CloudMessage, MessageState
 from .visibility_timeout import VisibilityTimeoutManager
@@ -43,6 +45,9 @@ class StorageNode:
         self.messages_stored = 0
         self.messages_received = 0
 
+        # Node outage state (reads fail while the node is down)
+        self.available = True
+
     def store_message(self, message: CloudMessage):
         """Store message in this node"""
         self.ordering.enqueue(message)
@@ -51,15 +56,28 @@ class StorageNode:
 
     def receive_message(self) -> Optional[CloudMessage]:
         """Receive message from this node"""
+        if not self.available:
+            return None
+
         if self.ordering.mode == "in_order":
             # In-Order Delivery: HOL Blocking Logic
             # 1. Peek at the next EXPECTED message from ordering buffer
             next_msg = self.ordering.peek()
-            
+
+            if next_msg is None or not self.visibility_manager.is_visible(next_msg.id):
+                # A message already released in sequence that timed out and is
+                # visible again must still be redelivered (otherwise in-order
+                # mode silently lost every failed message)
+                for msg_id in self.visibility_manager.visible_messages:
+                    if msg_id not in self.ordering.messages:
+                        message = self.visibility_manager.receive_specific_message(msg_id)
+                        self.messages_received += 1
+                        return message
+
             if next_msg is None:
                 # Buffer empty or next sequence not yet arrived
                 return None
-                
+
             # 2. Check if this specific message is available and visible
             if self.visibility_manager.is_visible(next_msg.id):
                 # 3. Receive it
@@ -81,9 +99,20 @@ class StorageNode:
                 self.messages_received += 1
             return message
 
+    def hide_replica(self, message_id: int) -> bool:
+        """
+        Hide this node's copy of a message that was received from another
+        replica, so one logical message is delivered to one consumer at a time.
+        """
+        return self.visibility_manager.receive_specific_message(message_id) is not None
+
     def acknowledge_message(self, message_id: int) -> bool:
         """Acknowledge message on this node"""
-        return self.visibility_manager.acknowledge_message(message_id)
+        acked = self.visibility_manager.acknowledge_message(message_id)
+        if acked:
+            # The copy is gone for good; don't let it block in-order delivery
+            self.ordering.remove(message_id)
+        return acked
 
     def get_queue_depth(self) -> int:
         """Get number of visible messages"""
@@ -111,12 +140,25 @@ class ConsistentHashRing:
         self.sorted_keys = []
         self._build_ring()
 
+    @staticmethod
+    def _hash(key) -> int:
+        """
+        Stable 64-bit hash.
+
+        Python's built-in hash() is unsuitable here: it is the identity for
+        small ints (so every message ID mapped to the same ring position) and
+        it is randomized per process for strings (so runs were not
+        reproducible). MD5 gives a uniform, deterministic placement.
+        """
+        digest = hashlib.md5(str(key).encode()).digest()
+        return int.from_bytes(digest[:8], "big")
+
     def _build_ring(self):
         """Build consistent hash ring with virtual nodes"""
         for node_id in range(self.num_nodes):
             for vnode in range(self.num_virtual_nodes):
                 # Hash: node_id + virtual node number
-                hash_key = hash(f"node_{node_id}_vnode_{vnode}")
+                hash_key = self._hash(f"node_{node_id}_vnode_{vnode}")
                 self.ring[hash_key] = node_id
 
         self.sorted_keys = sorted(self.ring.keys())
@@ -135,15 +177,13 @@ class ConsistentHashRing:
             return 0
 
         # Hash message ID
-        msg_hash = hash(message_id)
+        msg_hash = self._hash(f"msg_{message_id}")
 
-        # Find first node clockwise on ring
-        for key in self.sorted_keys:
-            if msg_hash <= key:
-                return self.ring[key]
-
-        # Wrap around to first node
-        return self.ring[self.sorted_keys[0]]
+        # Find first node clockwise on ring (wrap around to the first key)
+        idx = bisect.bisect_left(self.sorted_keys, msg_hash)
+        if idx == len(self.sorted_keys):
+            idx = 0
+        return self.ring[self.sorted_keys[idx]]
 
     def get_replicas(self, primary_node: int, replication_factor: int) -> List[int]:
         """
@@ -179,13 +219,20 @@ class DistributedBroker:
     def __init__(self, env: simpy.Environment,
                  num_nodes: int = 3,
                  replication_factor: int = 3,
-                 ordering_mode: str = "out_of_order"):
+                 ordering_mode: str = "out_of_order",
+                 node_mtbf: Optional[float] = None,
+                 node_mttr: float = 10.0):
         """
         Args:
             env: SimPy environment
             num_nodes: Number of storage nodes
             replication_factor: Number of replicas per message
             ordering_mode: "in_order" or "out_of_order"
+            node_mtbf: Mean time between node outages in seconds (exponential).
+                None disables outages.
+            node_mttr: Mean outage duration in seconds (exponential). While a
+                node is down its copies cannot be received; acknowledgements
+                are still applied (modelled as control-plane metadata).
         """
         self.env = env
         self.num_nodes = num_nodes
@@ -205,6 +252,21 @@ class DistributedBroker:
         self.total_messages_published = 0
         self.total_messages_received = 0
         self.total_acks = 0
+        self.total_outages = 0
+
+        self.node_mttr = node_mttr
+        if node_mtbf is not None:
+            for node in self.nodes:
+                env.process(self._outage_process(node, node_mtbf))
+
+    def _outage_process(self, node: StorageNode, mtbf: float):
+        """Alternate a node between up (Exp(mtbf)) and down (Exp(mttr))"""
+        while True:
+            yield self.env.timeout(random.expovariate(1.0 / mtbf))
+            node.available = False
+            self.total_outages += 1
+            yield self.env.timeout(random.expovariate(1.0 / self.node_mttr))
+            node.available = True
 
     def publish_message(self, message: CloudMessage):
         """
@@ -233,6 +295,8 @@ class DistributedBroker:
                 max_receive_count=message.max_receive_count
             )
             message_copy.replication_nodes = replica_nodes
+            # Preserve the producer's sequence number for in-order delivery
+            message_copy.vector_clock = list(message.vector_clock)
             self.nodes[node_id].store_message(message_copy)
 
         self.total_messages_published += 1
@@ -263,26 +327,38 @@ class DistributedBroker:
             
             msg1 = nodes[0].receive_message()
             if msg1:
-                self.total_messages_received += 1
-                return msg1
-                
+                return self._deliver(msg1, nodes[0])
+
             # If first failed/empty, try second immediately
             msg2 = nodes[1].receive_message()
             if msg2:
-                self.total_messages_received += 1
-                return msg2
-                
+                return self._deliver(msg2, nodes[1])
+
             return None
-            
+
         else:
             # Standard: Random node sampling (models SQS/Azure Queue behavior)
             sampled_node = random.choice(self.nodes)
 
             message = sampled_node.receive_message()
             if message:
-                self.total_messages_received += 1
+                return self._deliver(message, sampled_node)
 
             return message
+
+    def _deliver(self, message: CloudMessage, source: StorageNode) -> CloudMessage:
+        """
+        Hide the other replicas of a received message.
+
+        Without this, each replica had its own visibility state and the same
+        logical message could be handed to several consumers at once, so
+        replication inflated measured throughput with duplicate processing.
+        """
+        for node_id in message.replication_nodes:
+            if node_id != source.node_id:
+                self.nodes[node_id].hide_replica(message.id)
+        self.total_messages_received += 1
+        return message
 
     def acknowledge_message(self, message: CloudMessage) -> bool:
         """

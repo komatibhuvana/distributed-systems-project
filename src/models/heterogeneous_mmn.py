@@ -192,8 +192,6 @@ class HeterogeneousMMNQueue:
 
         # Create server pools (one per server group)
         self.pools: List[ServerPool] = []
-        # Create server pools (one per server group)
-        self.pools: List[ServerPool] = []
         for i, group in enumerate(config.server_groups):
             pool = ServerPool(env, group, i, self)
             self.pools.append(pool)
@@ -240,12 +238,18 @@ class HeterogeneousMMNQueue:
         policy = self.config.selection_policy
 
         if policy == "random":
-            # Randomly select pool (weighted by server count for fairness)
+            # Randomly select pool weighted by server count, i.e. every server
+            # receives λ/N regardless of its speed. Slow pools are unstable
+            # whenever λ/N >= μ_slow even if total capacity exceeds λ.
             weights = [pool.count for pool in self.pools]
             total_weight = sum(weights)
             probabilities = [w / total_weight for w in weights]
-            # Randomly select pool (weighted by server count for fairness)
-            weights = [pool.count for pool in self.pools]
+            return np.random.choice(self.pools, p=probabilities)
+
+        elif policy == "random_capacity":
+            # Randomly select pool weighted by capacity n_i·μ_i, so every pool
+            # runs at the same utilization ρ = λ / Σ n_i·μ_i
+            weights = [pool.count * pool.service_rate for pool in self.pools]
             total_weight = sum(weights)
             probabilities = [w / total_weight for w in weights]
             return np.random.choice(self.pools, p=probabilities)

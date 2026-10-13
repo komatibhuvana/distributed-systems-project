@@ -39,6 +39,24 @@ class MessageOrdering:
         # Consumer waits for message with sequence == queue_index
         self.queue_index = 0
 
+        # Sequence numbers removed without being delivered by this buffer
+        # (e.g. a replica acknowledged via another node); skipped by queue_index
+        self._removed_sequences = set()
+
+    def remove(self, message_id: int):
+        """Drop a message from the buffer without delivering it"""
+        message = self.messages.pop(message_id, None)
+        if message is not None and self.mode == "in_order" and message.vector_clock:
+            seq = message.vector_clock[0]
+            if seq >= self.queue_index:
+                self._removed_sequences.add(seq)
+                self._skip_removed()
+
+    def _skip_removed(self):
+        while self.queue_index in self._removed_sequences:
+            self._removed_sequences.discard(self.queue_index)
+            self.queue_index += 1
+
     def enqueue(self, message: CloudMessage):
         """
         Add message with ordering guarantee
@@ -96,6 +114,7 @@ class MessageOrdering:
             # Found the indexed message - deliver it and advance index
             self.messages.pop(target_message.id)
             self.queue_index += 1
+            self._skip_removed()
             return target_message
 
         else:

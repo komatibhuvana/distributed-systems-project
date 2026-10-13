@@ -317,29 +317,37 @@ class TwoPhaseCommitService:
     2PC BLOCKS the server during vote collection, preventing it from processing
     other messages. This increases effective service time and reduces throughput.
 
-    Mathematical Impact:
-    -------------------
-    - Base service time: E[S_base] = 1/μ
-    - 2PC overhead: E[Overhead] ≈ 2·RTT + p·timeout
-    - Total: E[S_total] = E[S_base] + E[Overhead]
-    - Effective service rate: μ_eff < μ (reduced!)
-    - System utilization: ρ_eff > ρ (increased, may become unstable!)
+    Mathematical Model (what sample() actually draws):
+    --------------------------------------------------
+    Let R ~ max(0.001, Normal(RTT_mean, RTT_std)) be one clipped RTT sample,
+    a = replica_availability, n = num_replicas, T = vote_timeout.
 
-    Example:
-    --------
-    Without 2PC:
-    - Base μ = 12 msg/sec → E[S] = 83ms
-    - With λ=100, N=10: ρ = 0.833 (stable)
-    - Mean Wq ≈ 25ms
+        Overhead O = R_prepare + V + R_commit
+        V = max_i X_i,  X_i = T w.p. (1-a), else an independent R
 
-    With 2PC (3 replicas, 10ms network):
-    - E[2PC overhead] ≈ 30ms (prepare 10ms + vote 10ms + commit 10ms)
-    - E[S_total] = 83ms + 30ms = 113ms
-    - μ_eff = 1/0.113 ≈ 8.85 msg/sec (26% reduction!)
-    - With λ=100, N=10: ρ_eff = 0.943 (near saturation!)
-    - Mean Wq ≈ 45ms (80% increase!)
+    Since T > RTT in every sensible configuration, V = T whenever at least one
+    replica times out, otherwise V = max of n RTTs (M_n). With
+    q = P(any timeout) = 1 - a^n:
 
-    This demonstrates that 2PC has SIGNIFICANT performance impact!
+        E[O]   = 2·E[R] + a^n·E[M_n] + q·T
+        Var[O] = 2·Var[R] + Var[V]
+        Var[V] = a^n·E[M_n²] + q·T² − (E[V])²       (Bernoulli mixture)
+        E[S_total] = E[S_base] + E[O],  Var[S_total] = Var[S_base] + Var[O]
+
+    E[R], E[M_n], E[M_n²] are computed numerically (exact up to quadrature
+    error) by `overhead_mean()` / `overhead_variance()`. Assumption: T is
+    larger than any RTT sample (true for defaults; T=1 s vs RTT 10±2 ms).
+
+    Worked numbers for the DEFAULTS (n=3, RTT 10 ms ± 2 ms, a=0.99, T=1.0 s):
+    - q = 1 − 0.99³ ≈ 0.0297, so the timeout term alone contributes ≈ 29.7 ms
+    - RTT terms contribute 2·10 ms + 0.9703·E[max of 3 RTTs](11.69 ms) ≈ 31.3 ms
+    - E[O] ≈ 61.0 ms (NOT ≈30 ms as an earlier version of this docstring
+      claimed; ≈30 ms is only roughly right for a=1.0, where E[O] ≈ 31.7 ms)
+    - Var[O] ≈ 0.0282 s² is dominated by the Bernoulli(q)×T timeout term:
+      SD[O] ≈ 168 ms (vs ≈3.5 ms if timeouts are ignored)
+    - With μ=12 (E[S_base]=83.3 ms): E[S_total] ≈ 144.4 ms, so with N=10 the
+      system saturates at λ ≈ N/E[S_total] ≈ 69.3 msg/s; λ=100 is UNSTABLE.
+    Call overhead_mean()/mean() for exact values; numbers above are rounded.
 
     References:
     -----------
@@ -427,6 +435,24 @@ class TwoPhaseCommitService:
         # 1. Base processing time (actual work)
         base_time = self.base_dist.sample()
 
+        # 2-4. 2PC overhead (same RNG draw order as before the refactor)
+        twopc_overhead = self._sample_overhead()
+
+        # Update average overhead tracking
+        alpha = 0.1  # Exponential moving average
+        self.avg_2pc_overhead = (1 - alpha) * self.avg_2pc_overhead + alpha * twopc_overhead
+
+        # Total service time
+        total_time = base_time + twopc_overhead
+
+        return total_time
+
+    def sample_overhead(self) -> float:
+        """Sample only the 2PC overhead O (no base processing, no metric tracking)."""
+        return self._sample_overhead(track=False)
+
+    def _sample_overhead(self, track: bool = True) -> float:
+        """Draw one 2PC overhead sample: prepare RTT + vote collection + commit RTT."""
         # 2. PREPARE phase - send prepare message to all replicas
         prepare_rtt = self._sample_network_rtt()
 
@@ -449,70 +475,119 @@ class TwoPhaseCommitService:
         # This is the BLOCKING component that reduces throughput!
         vote_collection_time = max(vote_times)
 
-        if any_timeout:
+        if any_timeout and track:
             self.timeout_count += 1
 
         # 4. COMMIT phase - send decision (commit or abort) to all
         commit_rtt = self._sample_network_rtt()
 
         # Total 2PC overhead
-        twopc_overhead = prepare_rtt + vote_collection_time + commit_rtt
+        return prepare_rtt + vote_collection_time + commit_rtt
 
-        # Update average overhead tracking
-        alpha = 0.1  # Exponential moving average
-        self.avg_2pc_overhead = (1 - alpha) * self.avg_2pc_overhead + alpha * twopc_overhead
+    # ------------------------------------------------------------------
+    # Exact (numerical) moments of the overhead
+    # ------------------------------------------------------------------
+    _RTT_FLOOR = 0.001  # must match the clip in _sample_network_rtt()
 
-        # Total service time
-        total_time = base_time + twopc_overhead
+    def _clipped_rtt_cdf(self, x):
+        """CDF of R = max(0.001, Normal(m, s)); zero below the 1 ms floor."""
+        x = np.asarray(x, dtype=float)
+        if self.network_rtt_std == 0:
+            cdf = (x >= max(self._RTT_FLOOR, self.network_rtt_mean)).astype(float)
+        else:
+            cdf = stats.norm.cdf(x, loc=self.network_rtt_mean, scale=self.network_rtt_std)
+        return np.where(x < self._RTT_FLOOR, 0.0, cdf)
 
-        return total_time
+    def _clipped_rtt_max_moments(self, k: int):
+        """
+        (E[M_k], E[M_k²]) for M_k = max of k iid clipped RTTs (k>=1).
+
+        Uses E[X] = ∫₀^∞ (1-F(x)) dx and E[X²] = ∫₀^∞ 2x(1-F(x)) dx with
+        F = F_R^k, evaluated by adaptive quadrature over [0, m + 12·s].
+        """
+        from scipy import integrate
+        if self.network_rtt_std == 0:
+            v = max(self._RTT_FLOOR, self.network_rtt_mean)
+            return v, v * v
+        upper = self.network_rtt_mean + 12.0 * self.network_rtt_std
+        upper = max(upper, self._RTT_FLOOR * 2)
+        surv = lambda x: 1.0 - float(self._clipped_rtt_cdf(x)) ** k
+        pts = [self._RTT_FLOOR, self.network_rtt_mean]
+        pts = [p for p in pts if 0 < p < upper]
+        m1, _ = integrate.quad(surv, 0.0, upper, points=pts, limit=200,
+                               epsabs=1e-13, epsrel=1e-10)
+        m2, _ = integrate.quad(lambda x: 2.0 * x * surv(x), 0.0, upper,
+                               points=pts, limit=200, epsabs=1e-15, epsrel=1e-10)
+        return m1, m2
+
+    def overhead_moments(self) -> dict:
+        """
+        Exact moments of the 2PC overhead O as sampled by sample().
+
+        Returns dict with E[R], Var[R], E[M_n], E[M_n²], q=P(any timeout),
+        E[V], Var[V], E[O], Var[O]. Valid when vote_timeout >= every RTT
+        sample (always true for the defaults).
+        """
+        n = self.num_replicas
+        a = self.replica_availability
+        T = self.vote_timeout
+        key = (n, a, T, self.network_rtt_mean, self.network_rtt_std)
+        cache = getattr(self, '_moments_cache', None)
+        if cache is not None and cache[0] == key:
+            return dict(cache[1])
+        r1, r2 = self._clipped_rtt_max_moments(1)
+        mn1, mn2 = self._clipped_rtt_max_moments(n)
+        p_all = a ** n
+        q = 1.0 - p_all
+        ev = p_all * mn1 + q * T
+        ev2 = p_all * mn2 + q * T * T
+        var_r = r2 - r1 * r1
+        var_v = ev2 - ev * ev
+        result = {
+            'E_R': r1, 'Var_R': var_r, 'E_Mn': mn1, 'E_Mn2': mn2,
+            'p_any_timeout': q, 'E_V': ev, 'Var_V': var_v,
+            'E_O': 2.0 * r1 + ev, 'Var_O': 2.0 * var_r + var_v,
+        }
+        self._moments_cache = (key, result)
+        return dict(result)
+
+    def overhead_mean(self) -> float:
+        """E[O] = 2·E[R] + a^n·E[M_n] + (1-a^n)·T (exact up to quadrature)."""
+        return self.overhead_moments()['E_O']
+
+    def overhead_variance(self) -> float:
+        """Var[O] = 2·Var[R] + Var[V], V a Bernoulli mixture of M_n and T."""
+        return self.overhead_moments()['Var_O']
 
     def mean(self) -> float:
         """
-        Expected total service time: E[S_total] = E[S_base] + E[2PC overhead]
+        Expected total service time: E[S_total] = E[S_base] + E[O]
 
-        E[2PC overhead] ≈ 3·E[RTT] + p_timeout·timeout
-        where:
-        - 3·E[RTT]: prepare + vote + commit phases
-        - p_timeout: probability any replica times out ≈ 1 - (1-p)^n
+        E[O] = 2·E[R] + a^n·E[max of n RTTs] + (1 − a^n)·T
+        (prepare + vote + commit). For the defaults the timeout term
+        (1 − 0.99³)·1.0 s ≈ 29.7 ms is about half of E[O].
+
+        Note: an earlier version used E[R] instead of E[max of n RTTs] for
+        the no-timeout vote phase, which under-estimated E[O] slightly.
         """
-        base_mean = self.base_dist.mean()
-
-        # Expected 2PC overhead
-        expected_rtt = self.network_rtt_mean
-
-        # Probability at least one replica times out
-        p_no_timeout_all = self.replica_availability ** self.num_replicas
-        p_any_timeout = 1 - p_no_timeout_all
-
-        # Expected overhead: 3 RTTs + timeout penalty
-        expected_overhead = (
-            expected_rtt +  # PREPARE
-            (p_no_timeout_all * expected_rtt + p_any_timeout * self.vote_timeout) +  # VOTE (blocking)
-            expected_rtt    # COMMIT
-        )
-
-        return base_mean + expected_overhead
+        return self.base_dist.mean() + self.overhead_mean()
 
     def variance(self) -> float:
         """
         Variance of total service time
 
-        Var[S_total] = Var[S_base] + Var[2PC overhead]
+        Var[S_total] = Var[S_base] + Var[O], with
+        Var[O] = 2·Var[R] + Var[V] and
+        Var[V] = a^n·E[M_n²] + q·T² − (a^n·E[M_n] + q·T)².
 
-        Note: This is approximate as we assume independence
+        The Bernoulli(q)×T timeout term dominates Var[O] whenever q > 0.
+        (An earlier version returned only Var[S_base] + 3·RTT_std², which
+        ignored the timeout term and under-estimated the variance by orders
+        of magnitude for replica_availability < 1.)
+        Assumes base processing and 2PC overhead are independent (they are
+        drawn independently in sample()).
         """
-        base_var = self.base_dist.variance()
-
-        # Variance of network RTT (assuming normal distribution)
-        rtt_var = self.network_rtt_std ** 2
-
-        # Approximate variance of 2PC overhead
-        # Simplification: Var[3·RTT] = 3·Var[RTT] (assuming independent)
-        overhead_var = 3 * rtt_var
-
-        # Total variance (assumes base and 2PC are independent)
-        return base_var + overhead_var
+        return self.base_dist.variance() + self.overhead_variance()
 
     def coefficient_of_variation(self) -> float:
         """CV² = Var[S_total] / E[S_total]²"""

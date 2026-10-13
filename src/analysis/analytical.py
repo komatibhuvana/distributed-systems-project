@@ -1160,3 +1160,148 @@ class HeterogeneousMMNAnalytical:
             'mean_waiting_time_upper_bound': self.mean_waiting_time_upper_bound(),
             'mean_response_time': self.mean_response_time_corrected(),
         }
+
+
+class MMNKAnalytical:
+    """
+    Exact M/M/N/K (finite capacity K, including those in service).
+
+    Birth-death stationary distribution (stable for any ρ, including ρ ≥ 1):
+        p_n ∝ a^n / n!                       for 0 ≤ n ≤ N
+        p_n ∝ a^N / N! · ρ^(n-N)             for N < n ≤ K
+    with a = λ/μ, ρ = λ/(N·μ).
+
+    Blocking (PASTA):      P_K = p_K   (Erlang-B when K = N)
+    Effective arrival:     λ_eff = λ·(1 - P_K)
+    Mean queue length:     Lq = Σ_{n>N} (n-N)·p_n
+    Mean wait (accepted):  Wq = Lq / λ_eff   (Little's Law)
+    Wait CDF (accepted):   an accepted arrival sees n with prob p_n/(1-P_K), n < K;
+                           if n ≥ N its wait is Erlang(n-N+1, N·μ).
+    """
+
+    def __init__(self, arrival_rate: float, num_servers: int,
+                 service_rate: float, max_capacity: int):
+        if max_capacity < num_servers:
+            raise ValueError("max_capacity K must be >= num_servers N")
+        self.lambda_ = arrival_rate
+        self.N = num_servers
+        self.mu = service_rate
+        self.K = max_capacity
+        self.a = arrival_rate / service_rate
+        self.rho = arrival_rate / (num_servers * service_rate)
+
+    def state_probabilities(self) -> np.ndarray:
+        """p_0..p_K computed in log-space for numerical stability."""
+        logp = np.zeros(self.K + 1)
+        for n in range(1, self.K + 1):
+            logp[n] = logp[n - 1] + np.log(self.lambda_) - np.log(min(n, self.N) * self.mu)
+        logp -= logp.max()
+        p = np.exp(logp)
+        return p / p.sum()
+
+    def blocking_probability(self) -> float:
+        return float(self.state_probabilities()[-1])
+
+    def effective_arrival_rate(self) -> float:
+        return self.lambda_ * (1.0 - self.blocking_probability())
+
+    def mean_queue_length(self) -> float:
+        p = self.state_probabilities()
+        n = np.arange(self.K + 1)
+        return float(np.sum(np.maximum(n - self.N, 0) * p))
+
+    def mean_system_size(self) -> float:
+        p = self.state_probabilities()
+        return float(np.sum(np.arange(self.K + 1) * p))
+
+    def mean_waiting_time(self) -> float:
+        return self.mean_queue_length() / self.effective_arrival_rate()
+
+    def mean_response_time(self) -> float:
+        return self.mean_system_size() / self.effective_arrival_rate()
+
+    def prob_wait(self) -> float:
+        """P(accepted arrival must wait)."""
+        p = self.state_probabilities()
+        return float(p[self.N:self.K].sum() / (1.0 - p[-1]))
+
+    def wait_cdf(self, t: float) -> float:
+        from scipy import stats
+        p = self.state_probabilities()
+        acc = p[:self.K] / (1.0 - p[-1])
+        cdf = acc[:self.N].sum()
+        for n in range(self.N, self.K):
+            cdf += acc[n] * stats.gamma.cdf(t, a=n - self.N + 1, scale=1.0 / (self.N * self.mu))
+        return float(cdf)
+
+    def wait_percentile(self, q: float) -> float:
+        """q in (0,1). Returns 0 if P(no wait) ≥ q."""
+        from scipy import optimize
+        if self.wait_cdf(0.0) >= q:
+            return 0.0
+        hi = 1.0 / (self.N * self.mu)
+        while self.wait_cdf(hi) < q:
+            hi *= 2.0
+        return float(optimize.brentq(lambda t: self.wait_cdf(t) - q, 0.0, hi, xtol=1e-12))
+
+    def all_metrics(self) -> Dict[str, float]:
+        return {
+            'blocking_probability': self.blocking_probability(),
+            'effective_arrival_rate': self.effective_arrival_rate(),
+            'mean_queue_length': self.mean_queue_length(),
+            'mean_waiting_time': self.mean_waiting_time(),
+            'mean_response_time': self.mean_response_time(),
+            'p99_waiting_time': self.wait_percentile(0.99),
+        }
+
+
+class MMNPriorityAnalytical:
+    """
+    M/M/N with P priority classes, all classes with the same service rate μ.
+    Class 1 = highest priority. σ_k = Σ_{i≤k} λ_i/(N·μ).
+
+    Non-preemptive (Cobham 1954, multi-server, equal exponential service):
+        W_k = C(N, a) / (N·μ) / ((1 - σ_{k-1})(1 - σ_k)),   a = λ/μ (total load)
+
+    Preemptive-resume (exact for equal exponential rates): classes 1..k are
+    unaffected by lower classes and, by memorylessness, their aggregate number in
+    system equals that of an FCFS M/M/N with rate λ_{≤k}. Hence
+        λ_k·T_k = λ_{≤k}·T^{MMN}(λ_{≤k}) - λ_{≤k-1}·T^{MMN}(λ_{≤k-1}),
+        W_k = T_k - 1/μ  (time not in service, incl. time spent preempted).
+
+    Conservation law (work-conserving, equal μ): Σ λ_k W_k / λ = Wq(M/M/N, λ).
+    """
+
+    def __init__(self, class_rates, num_servers: int, service_rate: float):
+        self.rates = [float(r) for r in class_rates]
+        self.N = num_servers
+        self.mu = service_rate
+        self.lambda_ = sum(self.rates)
+        self.rho = self.lambda_ / (num_servers * service_rate)
+        if self.rho >= 1.0:
+            raise ValueError(f"System unstable: ρ = {self.rho:.3f} >= 1")
+
+    def sigma(self, k: int) -> float:
+        """Cumulative utilization of classes 1..k (σ_0 = 0)."""
+        return sum(self.rates[:k]) / (self.N * self.mu)
+
+    def fcfs_wait(self) -> float:
+        return MMNAnalytical(self.lambda_, self.N, self.mu).mean_waiting_time()
+
+    def nonpreemptive_wait(self, k: int) -> float:
+        C = MMNAnalytical(self.lambda_, self.N, self.mu).erlang_c()
+        return C / (self.N * self.mu) / ((1 - self.sigma(k - 1)) * (1 - self.sigma(k)))
+
+    def _cum_response(self, k: int) -> float:
+        lam = sum(self.rates[:k])
+        if lam <= 0:
+            return 0.0
+        return lam * MMNAnalytical(lam, self.N, self.mu).mean_response_time()
+
+    def preemptive_resume_wait(self, k: int) -> float:
+        T_k = (self._cum_response(k) - self._cum_response(k - 1)) / self.rates[k - 1]
+        return T_k - 1.0 / self.mu
+
+    def conservation_wait(self, preemptive: bool = False) -> float:
+        f = self.preemptive_resume_wait if preemptive else self.nonpreemptive_wait
+        return sum(r * f(k + 1) for k, r in enumerate(self.rates)) / self.lambda_

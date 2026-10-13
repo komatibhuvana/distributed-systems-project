@@ -11,7 +11,11 @@ from src.core.distributions import ParetoService
 from src.models.cloud_message import CloudMessage
 from src.models.distributed_broker import DistributedBroker
 
-def run_ordering_experiment(ordering_mode: str, arrival_rate=80, service_rate=100, duration=500):
+def run_ordering_experiment(ordering_mode: str, arrival_rate=80, service_rate=100, duration=500,
+                            seed=42, warmup=50):
+    # The broker and this script both use the stdlib `random` module
+    random.seed(seed)
+    np.random.seed(seed)
     env = simpy.Environment()
     
     # Setup Broker
@@ -33,9 +37,9 @@ def run_ordering_experiment(ordering_mode: str, arrival_rate=80, service_rate=10
                 
                 broker.acknowledge_message(msg)
                 
-                # Record latency
-                latency = env.now - msg.arrival_time
-                latencies.append(latency)
+                # Record latency (after warmup)
+                if msg.arrival_time >= warmup:
+                    latencies.append(env.now - msg.arrival_time)
             else:
                 # Wait if no message available (or blocked)
                 yield env.timeout(0.001) # Poll interval
@@ -78,37 +82,40 @@ def run_ordering_experiment(ordering_mode: str, arrival_rate=80, service_rate=10
     
     return latencies
 
+def _ci95(values):
+    from scipy import stats
+    values = np.asarray(values, dtype=float)
+    half = stats.t.ppf(0.975, len(values) - 1) * values.std(ddof=1) / np.sqrt(len(values))
+    return float(values.mean()), float(half)
+
+
 if __name__ == "__main__":
     print("Running 'Cost of Consistency' Experiment...")
     print("-" * 50)
-    
-    # 1. Out-of-Order (Baseline)
-    print("Running Out-of-Order Simulation...")
-    latencies_ooo = run_ordering_experiment("out_of_order")
-    p99_ooo = np.percentile(latencies_ooo, 99)
-    mean_ooo = np.mean(latencies_ooo)
-    print(f"Out-of-Order P99: {p99_ooo*1000:.2f} ms")
-    print(f"Out-of-Order Mean: {mean_ooo*1000:.2f} ms")
-    
-    # 2. In-Order (Experiment)
-    print("\nRunning In-Order Simulation...")
-    latencies_io = run_ordering_experiment("in_order")
-    p99_io = np.percentile(latencies_io, 99)
-    mean_io = np.mean(latencies_io)
-    print(f"In-Order P99:     {p99_io*1000:.2f} ms")
-    print(f"In-Order Mean:     {mean_io*1000:.2f} ms")
-    
-    # 3. Comparison
-    cost_percent = ((mean_io - mean_ooo) / mean_ooo) * 100
-    print("-" * 50)
-    print(f"Cost of Consistency (Mean): +{cost_percent:.1f}% Latency")
-    print("-" * 50)
-    
-    # Save results for graph
-    results = pd.DataFrame({
-        'Mode': ['Out-of-Order', 'In-Order'],
-        'P99_Latency_ms': [p99_ooo*1000, p99_io*1000],
-        'Mean_Latency_ms': [mean_ooo*1000, mean_io*1000]
-    })
+
+    # 5 consumers, Pareto(1.5) service with mean 1.5/(0.5*100) = 0.03 s
+    # -> capacity ~166.7 msg/s; sweep offered load up to rho ~0.9
+    seeds = list(range(1, 11))
+    rows, runs = [], []
+    for arrival_rate in [40, 80, 120, 150]:
+        for mode, label in [("out_of_order", "Out-of-Order"), ("in_order", "In-Order")]:
+            means, p99s = [], []
+            for seed in seeds:
+                lat = run_ordering_experiment(mode, arrival_rate=arrival_rate, seed=seed)
+                means.append(np.mean(lat) * 1000)
+                p99s.append(np.percentile(lat, 99) * 1000)
+                runs.append({'arrival_rate': arrival_rate, 'Mode': label, 'seed': seed,
+                             'Mean_Latency_ms': means[-1], 'P99_Latency_ms': p99s[-1]})
+            m, mh = _ci95(means)
+            p, ph = _ci95(p99s)
+            rows.append({'arrival_rate': arrival_rate, 'Mode': label,
+                         'Mean_Latency_ms': m, 'Mean_Latency_ms_ci95': mh,
+                         'P99_Latency_ms': p, 'P99_Latency_ms_ci95': ph,
+                         'replications': len(seeds)})
+            print(f"lambda={arrival_rate:>4} {label:<13} mean {m:8.2f} +/- {mh:.2f} ms  "
+                  f"P99 {p:8.2f} +/- {ph:.2f} ms")
+
+    results = pd.DataFrame(rows)
     results.to_csv('experiments/ordering_mode_results.csv', index=False)
+    pd.DataFrame(runs).to_csv('experiments/ordering_mode_runs.csv', index=False)
     print("Results saved to experiments/ordering_mode_results.csv")

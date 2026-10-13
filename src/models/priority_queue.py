@@ -56,6 +56,8 @@ class PriorityMetrics:
             'completions': self.completions,
             'mean_wait': np.mean(self.wait_times),
             'std_wait': np.std(self.wait_times),
+            'p95_wait': np.percentile(self.wait_times, 95),
+            'p99_wait': np.percentile(self.wait_times, 99),
             'mean_service': np.mean(self.service_times),
             'mean_response': np.mean(self.response_times),
             'p50_response': np.percentile(self.response_times, 50),
@@ -145,6 +147,10 @@ class PriorityQueueModel:
         Args:
             msg: Message to process
         """
+        if self.config.preemptive:
+            yield from self._process_preemptive_resume(msg)
+            return
+
         arrival_time = self.env.now
         priority = msg.priority
 
@@ -203,6 +209,69 @@ class PriorityQueueModel:
         finally:
             # Release server
             self.servers.release(request)
+
+    def _process_preemptive_resume(self, msg: PriorityMessage):
+        """
+        Preemptive-resume service.
+
+        A higher-priority arrival interrupts the lowest-priority job in
+        service; the interrupted job re-joins the queue (behind same-class
+        jobs already waiting) and later resumes with its *remaining* work.
+        Every job is eventually completed and recorded.
+
+        Bug fixed here: the previous implementation caught simpy.Interrupt and
+        silently discarded the preempted message, so low-priority statistics
+        only contained jobs that were never preempted (survivor bias) and
+        preempted work was lost.
+
+        Recorded wait = all time spent not in service (initial queueing + time
+        spent preempted), accumulated segment by segment.
+        """
+        arrival_time = self.env.now
+        priority = msg.priority
+        total_service = np.random.exponential(1.0 / self.config.service_rate)
+        remaining = total_service
+        first_start = None
+        waited = 0.0
+        queued_since = arrival_time
+
+        self.queue_by_priority[priority].append(msg)
+
+        while remaining > 0:
+            request = self.servers.request(priority=priority, preempt=True)
+            start = None
+            try:
+                yield request
+                start = self.env.now
+                waited += start - queued_since
+                if first_start is None:
+                    first_start = start
+                    msg.start_service_time = start
+                    if msg in self.queue_by_priority[priority]:
+                        self.queue_by_priority[priority].remove(msg)
+                    total_in_queue = sum(len(q) for q in self.queue_by_priority.values())
+                    self.priority_metrics[priority].queue_lengths.append(total_in_queue)
+                yield self.env.timeout(remaining)
+                remaining = 0.0
+            except simpy.Interrupt:
+                if start is not None:
+                    remaining = max(0.0, remaining - (self.env.now - start))
+                    queued_since = self.env.now
+            finally:
+                if request.triggered:
+                    self.servers.release(request)
+                else:
+                    request.cancel()
+
+        msg.completion_time = self.env.now
+        response_time = msg.completion_time - arrival_time
+        wait_time = waited
+
+        if self.env.now >= self.config.warmup_time:
+            self.priority_metrics[priority].wait_times.append(wait_time)
+            self.priority_metrics[priority].service_times.append(total_service)
+            self.priority_metrics[priority].response_times.append(response_time)
+            self.priority_metrics[priority].completions += 1
 
     def run(self) -> Dict[int, Dict]:
         """

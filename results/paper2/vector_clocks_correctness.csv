@@ -1,0 +1,15 @@
+check,passed,detail
+CausalityTracker E0->E1 same process,True,got=happened_before
+CausalityTracker E1->E2 send-receive,True,got=happened_before
+CausalityTracker E0->E2 transitivity,True,got=happened_before
+CausalityTracker E2||E4 concurrent,True,got=concurrent
+CausalityTracker E1||E4 concurrent,True,got=concurrent
+CausalityTracker E2->E6 transitivity,True,got=happened_before
+Legacy CausalMessageQueue: m2 held back before m1,True,
+Legacy CausalMessageQueue: m2 eventually delivered,False,pending=1 (known bug: clock counts receives)
+BSS: m2 held back before m1,True,
+BSS: m1 then m2 delivered in causal order,True,"['m1', 'm2']"
+BSS simulation: zero causal-order violations (all runs),True,"runs=170, violations=0"
+BSS simulation: every reception eventually delivered (all runs),True,undelivered=0
+BSS simulation: constant delay -> zero hold-backs (FIFO+uniform delay),True,held_back=0
+Checker negative control: no-ordering delivery shows violations when delay varies,True,violations=278223

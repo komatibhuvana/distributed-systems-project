@@ -52,7 +52,16 @@ class FiniteCapacityMetrics:
 
         blocking_prob = self.blocked_arrivals / self.total_arrivals if self.total_arrivals > 0 else 0.0
 
+        # NOTE (known bias): total_arrivals counts warmup arrivals but blocked_arrivals
+        # does not, so 'blocking_probability' above is biased low by roughly the warmup
+        # fraction. It is kept for backward compatibility (tests depend on it).
+        # Use 'blocking_probability_post_warmup' for an unbiased estimate.
+        post_warmup = self.accepted_arrivals + self.blocked_arrivals
+        blocking_prob_pw = self.blocked_arrivals / post_warmup if post_warmup > 0 else 0.0
+
         return {
+            'blocking_probability_post_warmup': blocking_prob_pw,
+            'p99_wait': np.percentile(self.wait_times, 99),
             'total_arrivals': self.total_arrivals,
             'accepted': self.accepted_arrivals,
             'blocked': self.blocked_arrivals,

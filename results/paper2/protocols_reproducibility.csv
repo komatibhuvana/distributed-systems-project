@@ -1,0 +1,6 @@
+model,config,identical_on_rerun,numeric_fields_compared
+MMN2PCQueue,"('2pc', 40.0, 0.99, 1.0, 0)",True,19
+MMNQueue,"('no_2pc', 40.0, nan, nan, 0)",True,19
+RaftCluster_election,"('realistic_lan', 5, 0)",True,19
+RaftCluster_commit,"('realistic_lan', 5, 0, True)",True,20
+causal_broadcast,"('bss', 5, 10.0, 1.0, 0)",True,20

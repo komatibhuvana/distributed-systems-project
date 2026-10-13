@@ -412,3 +412,240 @@ class CausalMessageQueue:
             'held_back_count': self.held_back_count,
             'pending_count': len(self.pending_messages),
         }
+
+
+# ----------------------------------------------------------------------
+# Causal broadcast (Birman–Schiper–Stephenson) + measurement driver
+# ----------------------------------------------------------------------
+#
+# Known limitations of CausalMessageQueue above (kept unchanged for backward
+# compatibility with existing scripts):
+#   1. The sender is inferred as argmax(message_clock), which is wrong whenever
+#      the sender has seen more events from another process than from itself.
+#   2. Its vector clock counts ALL events (sends AND receives), but the
+#      delivery test "ts[j] == VC[j] + 1" is only valid when VC[j] counts the
+#      messages *broadcast* by j. A sender that receives between two sends
+#      skips a value, so its later messages can never be delivered.
+#      (experiments/distributed_systems_validation.py Experiment 4 shows this:
+#      "Pending messages eventually delivered: False".)
+#   3. _deliver_pending makes a single pass, so cascades can be missed.
+# CausalBroadcastMember implements the standard algorithm correctly.
+
+class CausalBroadcastMember:
+    """
+    One process in a causal-broadcast group (BSS algorithm).
+
+    VC[j] = number of broadcasts from process j delivered here (own
+    broadcasts count as delivered at send time). A message m from j with
+    timestamp ts is deliverable iff ts[j] == VC[j] + 1 and ts[k] <= VC[k]
+    for all k != j. Delivery sets VC[j] = ts[j]; the hold-back queue is
+    re-scanned until no further message becomes deliverable.
+    """
+
+    def __init__(self, process_id: int, num_processes: int):
+        self.process_id = process_id
+        self.num_processes = num_processes
+        self.vc = [0] * num_processes
+        self.pending: List[Tuple[int, List[int], object]] = []  # (sender, ts, payload)
+        self.delivered_count = 0
+        self.held_back_count = 0
+
+    def broadcast(self) -> List[int]:
+        """Timestamp a new broadcast; returns the timestamp to attach."""
+        self.vc[self.process_id] += 1
+        return list(self.vc)
+
+    def _deliverable(self, sender: int, ts: List[int]) -> bool:
+        if ts[sender] != self.vc[sender] + 1:
+            return False
+        for k in range(self.num_processes):
+            if k != sender and ts[k] > self.vc[k]:
+                return False
+        return True
+
+    def receive(self, sender: int, ts: List[int], payload) -> List[object]:
+        """
+        Receive a message; returns the list of payloads delivered as a result
+        (possibly empty if the message is held back, possibly several if it
+        unblocks held-back messages), in delivery order.
+        """
+        delivered = []
+        if self._deliverable(sender, ts):
+            self.vc[sender] = ts[sender]
+            self.delivered_count += 1
+            delivered.append(payload)
+        else:
+            self.pending.append((sender, ts, payload))
+            self.held_back_count += 1
+            return delivered
+
+        progress = True
+        while progress and self.pending:
+            progress = False
+            for i, (s, t, p) in enumerate(self.pending):
+                if self._deliverable(s, t):
+                    self.vc[s] = t[s]
+                    self.delivered_count += 1
+                    delivered.append(p)
+                    self.pending.pop(i)
+                    progress = True
+                    break
+        return delivered
+
+
+def _lognormal_sampler(rng, mean: float, cv: float):
+    """Return f() drawing a delay with the given mean and coefficient of variation."""
+    if cv <= 0:
+        return lambda: mean
+    import math
+    sigma2 = math.log(1.0 + cv * cv)
+    mu = math.log(mean) - sigma2 / 2.0
+    sigma = math.sqrt(sigma2)
+    return lambda: float(rng.lognormal(mu, sigma))
+
+
+def simulate_causal_broadcast(num_processes: int = 3,
+                              broadcast_rate: float = 10.0,
+                              delay_mean: float = 0.010,
+                              delay_cv: float = 1.0,
+                              duration: float = 30.0,
+                              seed: int = 0,
+                              implementation: str = "bss") -> Dict:
+    """
+    Discrete-event simulation of causal broadcast over a network with random
+    per-(message, receiver) one-way delays.
+
+    Each process broadcasts at Poisson rate `broadcast_rate` (msg/s) for
+    `duration` seconds; every broadcast goes to all other processes with an
+    independent lognormal delay (mean `delay_mean`, CV `delay_cv`; CV=0 means
+    constant delay). The simulation then drains until all messages arrive.
+
+    implementation="bss": CausalBroadcastMember (correct algorithm). Reports
+        hold-back fraction and hold-back delay (delivery time − arrival time)
+        and checks causal order against ground truth: every message's direct
+        causal predecessors (sender's previous broadcast + everything the
+        sender delivered since) must be delivered first at every receiver.
+    implementation="legacy": the original CausalMessageQueue, reporting how
+        many receptions are never delivered (stuck in its hold-back queue).
+    implementation="none": deliver on arrival (no causal ordering); the same
+        ground-truth checker then counts deliveries that violate causality
+        (negative control for the checker / baseline without vector clocks).
+
+    Returns a dict of metrics.
+    """
+    import numpy as np
+    import simpy
+
+    rng = np.random.default_rng(seed)
+    delay = _lognormal_sampler(rng, delay_mean, delay_cv)
+    env = simpy.Environment()
+    n = num_processes
+
+    if implementation in ("bss", "none"):
+        members = [CausalBroadcastMember(i, n) for i in range(n)]
+    elif implementation == "legacy":
+        members = [CausalMessageQueue(process_id=i, num_processes=n) for i in range(n)]
+    else:
+        raise ValueError(f"unknown implementation {implementation!r}")
+
+    deps: Dict[int, List[int]] = {}             # msg_id -> direct predecessors
+    since_last_send = [[] for _ in range(n)]    # delivered ids since last own send
+    last_own = [None] * n
+    delivered_sets = [set() for _ in range(n)]
+    arrival_time: Dict[Tuple[int, int], float] = {}   # (msg, receiver) -> t
+    holdback_delays: List[float] = []
+    held_back_flags: List[bool] = []
+    counters = {'broadcasts': 0, 'receptions': 0, 'violations': 0,
+                'violating_deliveries': 0}
+
+    def on_delivered(receiver: int, msg_id: int):
+        # Ground-truth causal check
+        missing = sum(1 for d in deps[msg_id] if d not in delivered_sets[receiver])
+        counters['violations'] += missing
+        if missing:
+            counters['violating_deliveries'] += 1
+        delivered_sets[receiver].add(msg_id)
+        since_last_send[receiver].append(msg_id)
+        hb = env.now - arrival_time.pop((msg_id, receiver))
+        holdback_delays.append(hb)
+        held_back_flags.append(hb > 0)
+
+    def transmit(sender, receiver, ts, msg_id):
+        yield env.timeout(delay())
+        counters['receptions'] += 1
+        arrival_time[(msg_id, receiver)] = env.now
+        m = members[receiver]
+        if implementation == "bss":
+            for mid in m.receive(sender, ts, msg_id):
+                on_delivered(receiver, mid)
+        elif implementation == "none":
+            on_delivered(receiver, msg_id)
+        else:
+            m.receive_message(ts, msg_id)
+
+    def broadcaster(i):
+        while True:
+            yield env.timeout(rng.exponential(1.0 / broadcast_rate))
+            if env.now > duration:
+                return
+            msg_id = counters['broadcasts']
+            counters['broadcasts'] += 1
+            d = list(since_last_send[i])
+            if last_own[i] is not None:
+                d.append(last_own[i])
+            deps[msg_id] = d
+            since_last_send[i] = []
+            last_own[i] = msg_id
+            delivered_sets[i].add(msg_id)
+            if implementation in ("bss", "none"):
+                ts = members[i].broadcast()
+            else:
+                ts, _ = members[i].send_message(msg_id)
+            for j in range(n):
+                if j != i:
+                    env.process(transmit(i, j, list(ts), msg_id))
+
+    for i in range(n):
+        env.process(broadcaster(i))
+    env.run()  # drains: broadcasters stop after `duration`
+
+    receptions = counters['receptions']
+    out = {
+        'implementation': implementation,
+        'num_processes': n,
+        'broadcast_rate': broadcast_rate,
+        'delay_mean': delay_mean,
+        'delay_cv': delay_cv,
+        'duration': duration,
+        'seed': seed,
+        'broadcasts': counters['broadcasts'],
+        'receptions': receptions,
+    }
+    if implementation in ("bss", "none"):
+        hb = np.array(holdback_delays) if holdback_delays else np.array([0.0])
+        flags = np.array(held_back_flags, dtype=bool)
+        held = hb[flags] if flags.any() else np.array([])
+        out.update({
+            'delivered': len(holdback_delays),
+            'undelivered': receptions - len(holdback_delays),
+            'held_back': int(flags.sum()),
+            'held_back_fraction': float(flags.mean()) if len(flags) else 0.0,
+            'mean_holdback_all': float(hb.mean()),
+            'mean_holdback_heldonly': float(held.mean()) if held.size else 0.0,
+            'p95_holdback_all': float(np.percentile(hb, 95)),
+            'p99_holdback_all': float(np.percentile(hb, 99)),
+            'max_holdback': float(hb.max()),
+            'causal_violations': counters['violations'],
+            'violating_deliveries': counters['violating_deliveries'],
+            'violating_delivery_fraction': (counters['violating_deliveries'] / len(holdback_delays)
+                                            if holdback_delays else 0.0),
+        })
+    else:
+        stuck = sum(len(m.pending_messages) for m in members)
+        out.update({
+            'delivered': sum(m.delivered_count for m in members),
+            'undelivered': stuck,
+            'held_back': sum(m.held_back_count for m in members),
+            'undelivered_fraction': stuck / receptions if receptions else 0.0,
+        })
+    return out
